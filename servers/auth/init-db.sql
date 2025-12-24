@@ -1,0 +1,2 @@
+CREATE ROLE kc_admin LOGIN PASSWORD 'abcd1234';
+CREATE DATABASE keycloak WITH OWNER kc_admin;
