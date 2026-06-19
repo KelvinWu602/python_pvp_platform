@@ -1,5 +1,5 @@
 {
-  "name": "python_pvp_web",
+  "name": "python_pvp",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -9,7 +9,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.700.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "form-data": "^4.0.5"
+    "pg": "^8.21.0"
   }
 }

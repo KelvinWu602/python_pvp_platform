@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Debug</title>
+</head>
+<body>
+    <h1>Auth Debug</h1>
+
+    <p>API base: <input id="apiBase" value="http://localhost:3000/api" size="40"></p>
+
+    <hr>
+
+    <h2>1. Create user</h2>
+    <div>
+        <label>username: <input id="newUsername"></label><br>
+        <label>full name: <input id="newFullName"></label><br>
+        <label>password: <input id="newPassword" type="password"></label><br>
+        <button onclick="createUser()">Create user</button>
+    </div>
+
+    <hr>
+
+    <h2>2. Login (get session token)</h2>
+    <div>
+        <label>username: <input id="loginUsername"></label><br>
+        <label>password: <input id="loginPassword" type="password"></label><br>
+        <button onclick="login()">Login</button>
+    </div>
+
+    <hr>
+
+    <h2>3. Session token</h2>
+    <div>
+        <label>token: <input id="token" size="50"></label>
+        <button onclick="logout()">Logout (DELETE session)</button>
+    </div>
+    <p><small>Login auto-fills this box. You can also paste a token in manually.</small></p>
+    <p><small>All Code &amp; Competition calls below send this token as <code>Authorization: Bearer &lt;token&gt;</code>.</small></p>
+
+    <hr>
+
+    <h2>4. Code API</h2>
+    <div>
+        <h3>Upload code (POST /code)</h3>
+        <label>enroll_id: <input id="codeEnrollId" size="40"></label><br>
+        <label>name: <input id="codeName"></label><br>
+        <label>code:</label><br>
+        <textarea id="codeBody" rows="4" cols="50"></textarea><br>
+        <button onclick="createCode()">Upload code</button>
+    </div>
+    <div>
+        <h3>List code by enrollment (GET /code?enroll_id=)</h3>
+        <label>enroll_id: <input id="codeListEnrollId" size="40"></label>
+        <button onclick="listCode()">List code</button>
+    </div>
+    <div>
+        <h3>Get code by id (GET /code/:id)</h3>
+        <label>code_id: <input id="codeGetId" size="40"></label>
+        <button onclick="getCode()">Get code</button>
+    </div>
+
+    <hr>
+
+    <h2>5. Competition API</h2>
+    <div>
+        <h3>Create game (POST /competition/game) — admin</h3>
+        <label>display_name: <input id="gameDisplayName"></label><br>
+        <label>simulation_reference: <input id="gameSimRef" size="40"></label><br>
+        <button onclick="createGame()">Create game</button>
+    </div>
+    <div>
+        <h3>Edit game (PUT /competition/game/:id) — admin</h3>
+        <label>game_id: <input id="gameEditId" size="40"></label><br>
+        <label>simulation_reference: <input id="gameEditSimRef" size="40"></label><br>
+        <button onclick="editGame()">Edit game</button>
+    </div>
+    <div>
+        <h3>Get game (GET /competition/game/:id)</h3>
+        <label>game_id: <input id="gameGetId" size="40"></label>
+        <button onclick="getGame()">Get game</button>
+    </div>
+    <div>
+        <h3>Create competition (POST /competition) — admin</h3>
+        <label>game_id: <input id="compGameId" size="40"></label><br>
+        <label>display_name: <input id="compDisplayName"></label><br>
+        <label>start_time_utc: <input id="compStart" placeholder="2026-01-01T00:00:00Z"></label><br>
+        <label>end_time_utc: <input id="compEnd" placeholder="2026-01-02T00:00:00Z"></label><br>
+        <label>enabled: <input id="compEnabled" type="checkbox"></label><br>
+        <button onclick="createCompetition()">Create competition</button>
+    </div>
+    <div>
+        <h3>List competitions (GET /competition)</h3>
+        <button onclick="listCompetitions()">List competitions</button>
+    </div>
+    <div>
+        <h3>Get competition (GET /competition/:id)</h3>
+        <label>competition_id: <input id="compGetId" size="40"></label>
+        <button onclick="getCompetition()">Get competition</button>
+    </div>
+    <div>
+        <h3>Delete competition (DELETE /competition/:id) — admin</h3>
+        <label>competition_id: <input id="compDeleteId" size="40"></label>
+        <button onclick="deleteCompetition()">Delete competition</button>
+    </div>
+    <div>
+        <h3>Enroll (POST /competition/:id/enroll)</h3>
+        <label>competition_id: <input id="enrollCompId" size="40"></label><br>
+        <label>selected_code_id: <input id="enrollCodeId" size="40"></label><br>
+        <button onclick="enroll()">Enroll</button>
+    </div>
+    <div>
+        <h3>Withdraw (DELETE /competition/:id/enroll)</h3>
+        <label>competition_id: <input id="withdrawCompId" size="40"></label>
+        <button onclick="withdraw()">Withdraw</button>
+    </div>
+
+    <hr>
+
+    <h2>Output</h2>
+    <pre id="output" style="background:#eee">(responses appear here)</pre>
+
+    <script>
+        function base() {
+            return document.getElementById('apiBase').value.replace(/\/$/, '');
+        }
+
+        function show(label, status, data) {
+            const out = document.getElementById('output');
+            out.textContent = `${label}\nHTTP ${status}\n` + JSON.stringify(data, null, 2);
+        }
+
+        async function createUser() {
+            const body = {
+                username: document.getElementById('newUsername').value,
+                full_name: document.getElementById('newFullName').value,
+                password: document.getElementById('newPassword').value,
+            };
+            try {
+                const res = await fetch(base() + '/user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json().catch(() => ({}));
+                show('POST /user', res.status, data);
+            } catch (e) {
+                show('POST /user (network error)', '-', { error: String(e) });
+            }
+        }
+
+        async function login() {
+            const body = {
+                username: document.getElementById('loginUsername').value,
+                password: document.getElementById('loginPassword').value,
+            };
+            try {
+                const res = await fetch(base() + '/user/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json().catch(() => ({}));
+                show('POST /user/session', res.status, data);
+                if (data.auth_token) {
+                    document.getElementById('token').value = data.auth_token;
+                }
+            } catch (e) {
+                show('POST /user/session (network error)', '-', { error: String(e) });
+            }
+        }
+
+        async function logout() {
+            const token = document.getElementById('token').value;
+            try {
+                const res = await fetch(base() + '/user/session', {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                });
+                const data = await res.json().catch(() => ({}));
+                show('DELETE /user/session', res.status, data);
+            } catch (e) {
+                show('DELETE /user/session (network error)', '-', { error: String(e) });
+            }
+        }
+
+        // Shared helper: send a request with the session token, show the result.
+        // `path` is appended to the API base; `body` (if given) is sent as JSON.
+        async function authedFetch(method, path, body) {
+            const token = document.getElementById('token').value;
+            const label = `${method} ${path}`;
+            const opts = {
+                method,
+                headers: { 'Authorization': 'Bearer ' + token },
+            };
+            if (body !== undefined) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            try {
+                const res = await fetch(base() + path, opts);
+                const data = await res.json().catch(() => ({}));
+                show(label, res.status, data);
+            } catch (e) {
+                show(label + ' (network error)', '-', { error: String(e) });
+            }
+        }
+
+        function val(id) {
+            return document.getElementById(id).value;
+        }
+
+        // --- Code API ---
+        function createCode() {
+            authedFetch('POST', '/code', {
+                enroll_id: val('codeEnrollId'),
+                name: val('codeName'),
+                code: val('codeBody'),
+            });
+        }
+
+        function listCode() {
+            authedFetch('GET', '/code?enroll_id=' + encodeURIComponent(val('codeListEnrollId')));
+        }
+
+        function getCode() {
+            authedFetch('GET', '/code/' + encodeURIComponent(val('codeGetId')));
+        }
+
+        // --- Competition API ---
+        function createGame() {
+            authedFetch('POST', '/competition/game', {
+                display_name: val('gameDisplayName'),
+                simulation_reference: val('gameSimRef'),
+            });
+        }
+
+        function editGame() {
+            authedFetch('PUT', '/competition/game/' + encodeURIComponent(val('gameEditId')), {
+                simulation_reference: val('gameEditSimRef'),
+            });
+        }
+
+        function getGame() {
+            authedFetch('GET', '/competition/game/' + encodeURIComponent(val('gameGetId')));
+        }
+
+        function createCompetition() {
+            authedFetch('POST', '/competition', {
+                game_id: val('compGameId'),
+                display_name: val('compDisplayName'),
+                start_time_utc: val('compStart'),
+                end_time_utc: val('compEnd'),
+                enabled: document.getElementById('compEnabled').checked,
+            });
+        }
+
+        function listCompetitions() {
+            authedFetch('GET', '/competition');
+        }
+
+        function getCompetition() {
+            authedFetch('GET', '/competition/' + encodeURIComponent(val('compGetId')));
+        }
+
+        function deleteCompetition() {
+            authedFetch('DELETE', '/competition/' + encodeURIComponent(val('compDeleteId')));
+        }
+
+        function enroll() {
+            authedFetch('POST', '/competition/' + encodeURIComponent(val('enrollCompId')) + '/enroll', {
+                selected_code_id: val('enrollCodeId'),
+            });
+        }
+
+        function withdraw() {
+            authedFetch('DELETE', '/competition/' + encodeURIComponent(val('withdrawCompId')) + '/enroll');
+        }
+    </script>
+</body>
+</html>

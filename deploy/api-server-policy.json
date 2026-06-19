@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SQSEnqueueBattleJob",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage"
+      ],
+      "Resource": "arn:aws:sqs:ap-southeast-1:097142190893:python-pvp-battle-queue"
+    },
+    {
+      "Sid": "SSMReadApiSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/DB_USER",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/DB_PASSWORD",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/DB_HOST",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/DB_PORT",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/DB_NAME",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/MASTER_KEY",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/BATTLE_QUEUE_URL",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/AWS_REGION",
+        "arn:aws:ssm:ap-southeast-1:097142190893:parameter/python_pvp/api/SIM_API_TOKEN"
+      ]
+    }
+  ]
+}

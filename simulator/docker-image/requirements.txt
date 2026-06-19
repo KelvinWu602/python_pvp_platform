@@ -1,0 +1,10 @@
+# Production client dependencies.
+# boto3 for S3; the DB client now calls the API server over HTTPS using the
+# stdlib (urllib), so psycopg2 is no longer needed.
+boto3
+
+# Game runtime dependencies (games/2526_game/game.py)
+numpy
+# Headless build: provides cv2 without the GUI system libs (libGL/X11) that
+# full opencv-python needs, which keeps the Lambda image small.
+opencv-python-headless

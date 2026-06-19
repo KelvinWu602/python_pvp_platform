@@ -1,1 +1,119 @@
-servers/*/node_modules/*
+# =============================================================================
+# Binary files and large assets
+# =============================================================================
+"YYC Coding Platform - System Architecture & Design.pdf"
+*.mp4
+*.mov
+*.avi
+
+# =============================================================================
+# Python bytecode
+# =============================================================================
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+*.venv
+
+# =============================================================================
+# Node.js
+# =============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json     # tracked via npm ci; local installs differ by machine
+*.env                 # all env files — real credentials, never commit
+.env.local
+.env.*.local
+
+# =============================================================================
+# AWS / Terraform
+# =============================================================================
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# =============================================================================
+# macOS
+# =============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# =============================================================================
+# IDE / editor
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# =============================================================================
+# Sensitive configuration and credentials
+# =============================================================================
+sensitive/
+# Individual secret files — these directories contain real credentials and
+# MUST NOT be committed. The 'sensitive/' wildcard above covers them.
+# If you need to reference secrets at runtime, use AWS SSM Parameter Store
+# or environment variables injected via IAM instance roles / Lambda config.
+# See deploy/ and docs/ for the recommended setup.
+
+# =============================================================================
+# Environment files (local overrides)
+# =============================================================================
+# Env files at various levels — real credentials, do not commit.
+# Recommended: use SSM Parameter Store for secrets in all deployed environments.
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# =============================================================================
+# Lambda and container build artifacts
+# =============================================================================
+# Lambda layers (if used)
+lambda-layer-pkgs/
+
+# Container build cache (if using Docker)
+.docker/buildkit/
+
+# =============================================================================
+# Game-specific local outputs (not source)
+# =============================================================================
+games/2526_game/out/        # generated replay videos
+games/2526_game/.venv/      # local venv
+
+# Simulator output
+simulator/docker-image/output/   # generated mp4 files during test runs
+simulator/docker-image/game/     # downloaded game files during test runs
+simulator/docker-image/strategies/  # downloaded player strategies during test runs
+
+# =============================================================================
+# Secrets and keys
+# =============================================================================
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# =============================================================================
+# Python test / coverage
+# =============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+dist/
+build/
+*.egg-info/
