@@ -99,10 +99,8 @@ router.post('/', async (req, res) => {
         //    message is unique per run and matches the app.simulation_job row
         //    the Lambda will INSERT (markPending). The payload shape matches
         //    what handler.py expects.
-        const simulation_id = crypto.randomUUID();
         const payload = {
             battle_id: battle.id,
-            simulation_id,
             game_id,
             a_user_id: user_id,
             b_user_id: opponentEnroll.user_id,
@@ -123,7 +121,7 @@ router.post('/', async (req, res) => {
             });
         }
 
-        return res.status(201).json({ ...battle, simulation_id });
+        return res.status(201).json({ ...battle });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Database error' });

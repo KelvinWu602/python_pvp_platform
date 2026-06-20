@@ -74,10 +74,13 @@ class DBClient:
     # -- job lifecycle ------------------------------------------------------
     def markPending(self, battle_id, simulation_id):
         """Create a fresh simulation_job row (status 'pending') via the API."""
-        self._request('POST', '/api/internal/simulation-job/pending', {
+        result = self._request('POST', '/api/internal/simulation-job/pending', {
             'battle_id': battle_id,
             'simulation_id': simulation_id,
         })
+        if not result or 'simulation_id' not in result:
+            raise RuntimeError(f'failed to markPending')
+        return result['simulation_id']
 
     def markComplete(self, battle_id, simulation_id, winner_user_id,
                      loser_user_id, result, battle_video_reference):

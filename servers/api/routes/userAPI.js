@@ -23,10 +23,10 @@ router.post('/', async (req, res)=> {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    const hash_password = await bcrypt.hashSync(password);
+    const hash_password = bcrypt.hashSync(password);
     
     const insertResult = await pool.query(
-      'INSERT INTO app.user (username, full_name, hash_password, urole) VALUES ($1, $2, $3, $4);',
+      'INSERT INTO app.user (username, full_name, hash_password, urole) VALUES ($1, $2, $3, $4) RETURNING *;',
       [username, full_name, hash_password, 'user']
     );
 

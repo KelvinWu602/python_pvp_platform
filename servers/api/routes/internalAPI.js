@@ -39,19 +39,19 @@ router.get('/code/:id', async (req, res) => {
 
 // POST /internal/simulation-job/pending - mark a job pending.
 // Replaces dbClient.markPending: INSERT a fresh simulation_job row.
-// body = { battle_id, simulation_id }
+// body = { battle_id }
 router.post('/simulation-job/pending', async (req, res) => {
-    const { battle_id, simulation_id } = req.body;
-    if (!battle_id || !simulation_id) {
-        return res.status(400).json({ error: 'battle_id and simulation_id are required' });
+    const { battle_id } = req.body;
+    if (!battle_id) {
+        return res.status(400).json({ error: 'battle_id is required' });
     }
     try {
-        await pool.query(
-            `INSERT INTO app.simulation_job (id, battle_id, status)
-             VALUES ($1, $2, 'pending')`,
-            [simulation_id, battle_id]
+        const insertResult = await pool.query(
+            `INSERT INTO app.simulation_job (battle_id, status)
+             VALUES ($1, 'pending') RETURNING *`,
+            [battle_id]
         );
-        return res.status(201).json({ simulation_id });
+        return res.status(201).json(insertResult.rows[0]);
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Database error' });

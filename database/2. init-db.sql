@@ -25,7 +25,7 @@ CREATE TYPE app.user_role AS ENUM (
 
 CREATE TABLE app.user (
     id uuid PRIMARY KEY,
-    username varchar(20) NOT NULL,
+    username varchar(20) UNIQUE NOT NULL,
     full_name varchar(50) NOT NULL,
     created_at_utc timestamp NOT NULL DEFAULT now(),
     updated_at_utc timestamp NOT NULL DEFAULT now(),

@@ -10,7 +10,6 @@ import importlib.util
 # envelope). Expected event (see simulator/design.md):
 #   {
 #     "battle_id":      "...",   # logical battle between a and b (stable across re-runs)
-#     "simulation_id":  "...",   # this specific lambda invocation
 #     "game_id":        "...",   # which game logic to run
 #     "a_user_id":      "...",   # player a
 #     "b_user_id":      "...",   # player b
@@ -159,16 +158,15 @@ def extract_payload(event):
 def lambda_handler(event, context):
     payload = extract_payload(event)
 
-    # battle_id / simulation_id are read first so we can always report failure.
+    # battle_id are read first so we can always report failure.
     battle_id = payload['battle_id']
-    simulation_id = payload['simulation_id']
 
     s3_client, db_client = setup_clients()
 
     try:
         # Record the attempt before doing any heavy lifting so the job is never
         # invisible while it runs.
-        db_client.markPending(battle_id, simulation_id)
+        simulation_id = db_client.markPending(battle_id)
 
         winner_user_id, loser_user_id, result, video_key = run_simulation(
             payload, s3_client, db_client

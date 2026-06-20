@@ -105,7 +105,6 @@ ssh -i sensitive/python-pvp-ec2.pem -N -L 5433:<rds-endpoint>:5432 ubuntu@<jumpb
 psql --host localhost --port 5433 --username postgres -f database/1.\ create-db.sql
 psql --host localhost --port 5433 --username python_pvp_admin -d python_pvp -f database/2.\ init-db.sql
 psql --host localhost --port 5433 --username python_pvp_admin -d python_pvp -f database/3.\ extension.sql
-psql --host localhost --port 5433 --username python_pvp_admin -d python_pvp -f database/4.\ service-account.sql
 ```
 
 ### 2. API server
@@ -162,6 +161,58 @@ app.simulation_job      — result of one Lambda invocation (battle_id → app.b
 ```
 
 For the full CREATE TABLE statements, see `database/2. init-db.sql`.
+
+---
+
+## Monthly cost estimate (200–300 users)
+
+Rough estimate for running **one** environment in **ap-southeast-1 (Singapore)**, on-demand pricing, USD/month. The architecture is deliberately cost-lean: the Lambda runs **outside the VPC**, so there is **no NAT Gateway and no VPC endpoints** (the items that usually dominate small AWS bills). The only always-on resources are one API EC2 instance, one jumpbox EC2 instance, and one RDS instance; everything else is usage-based.
+
+### Workload assumptions
+
+| Parameter | Value | Basis |
+|---|---|---|
+| Active users | ~250 | midpoint of 200–300 |
+| Battles per user / month | ~40 | engaged competition usage |
+| **Battles / month** | **~10,000** | 250 × 40 |
+| Lambda memory / timeout | 512 MB / 60 s | `simulator/deployment.md` |
+| Avg Lambda duration / battle | ~15 s | up to 30 s sim @ 60 fps + opencv render at 1080×720 |
+| Replay size | ~10–16 MB | sample `match.mp4` ≈ 16.5 MB |
+
+### Expected case (~$50–65 / month)
+
+| Service | Config | Monthly |
+|---|---|---|
+| EC2 — API server | `t3.small` (2 vCPU, 2 GB) | ~$19 |
+| EC2 — jumpbox | `t3.micro` (start only when needed) | ~$3–8 |
+| EBS | ~30 GB gp3 (2 root volumes) | ~$3 |
+| RDS PostgreSQL | `db.t4g.micro` Single-AZ + 20 GB gp3 | ~$15 |
+| Lambda | 10k × 15 s × 512 MB ≈ 76,800 GB-s | ~$1–3 |
+| SQS | battle queue + DLQ (≈ free tier) | ~$0 |
+| S3 | ~120 GB replays/mo + requests | ~$3 |
+| ECR | 1 image repo (~1–2 GB) | ~$0.20 |
+| CloudWatch Logs | Lambda + app logs | ~$1–3 |
+| Data transfer out | API JSON + replay downloads (~50–150 GB) | ~$5–15 |
+| SSM Parameter Store / IAM / VPC / IGW | — | $0 |
+| **Total** | | **≈ $50–65** |
+
+### Scenario range
+
+| Scenario | Setup | Monthly |
+|---|---|---|
+| **Low** | `t3.micro` API, `db.t4g.micro`, S3 lifecycle expiry, jumpbox off | ~$35–45 |
+| **Expected** | `t3.small` API, `db.t4g.micro`, replays retained | ~$50–65 |
+| **High** | `t3.medium` API, `db.t4g.small` Multi-AZ, ~20k battles, replays kept forever | ~$110–160 |
+
+### Cost notes & optimizations
+
+- **S3 grows unbounded.** `deployment.md` sets no lifecycle policy; at ~12 MB × 10k battles that is **~120 GB added every month** (compounding). Add an S3 lifecycle rule (e.g. expire replays after 30–90 days) to keep S3 flat at ~$3–5/mo.
+- **Lambda is nearly free** here (~$1–3/mo). The no-VPC design avoids the costs that usually make Lambda expensive; doubling battles barely moves the bill.
+- **EC2 + RDS are the real baseline (~$35–40/mo)** since they run 24/7. A 1-year Savings Plan / Reserved Instance (~30–40% off) plus stopping the jumpbox when idle can bring steady-state cost down to **~$25–30/mo**.
+- **Data transfer is the largest variable.** Serving 16 MB replay videos drives egress; if replay viewing is heavy, CloudFront in front of S3 can lower egress cost at scale.
+- **Assumptions not in the repo:** instance classes (none specified), battles/user/month, and replay retention. Adjust the workload table above to re-scope.
+
+> **Bottom line:** roughly **$50–65/month** for one environment at 200–300 users, or as low as **~$35/month** with a Savings Plan + S3 lifecycle policy.
 
 ---
 
