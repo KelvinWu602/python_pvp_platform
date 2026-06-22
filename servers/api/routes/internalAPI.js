@@ -50,7 +50,10 @@ router.post('/simulation-job/pending', async (req, res) => {
              VALUES ($1, 'pending') RETURNING *`,
             [battle_id]
         );
-        return res.status(201).json(insertResult.rows[0]);
+        return res.status(200).json({
+            simulation_id: insertResult.rows[0].id, 
+            ...insertResult.rows[0]
+    });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Database error' });
