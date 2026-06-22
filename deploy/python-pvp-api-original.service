@@ -3,15 +3,19 @@ Description=python-pvp API server
 After=network.target
 Wants=network-online.target
 
+# Fetch secrets from SSM Parameter Store before the process starts.
+# If this fails, the API must not start — fail explicitly rather than run
+# with a misconfigured or empty .env.
+ExecStartPre=/bin/bash -c '/opt/python_pvp_platform/deploy/load-ssm-secrets.sh'
+
 [Service]
 Type=simple
 User=appuser
 Group=appuser
 WorkingDirectory=/opt/python_pvp_platform/servers/api
+# EnvironmentFile is written by load-ssm-secrets.sh (ExecStartPre above).
+# It contains DB_*, MASTER_KEY, BATTLE_QUEUE_URL, AWS_REGION, SIM_API_TOKEN.
 EnvironmentFile=/etc/python_pvp/api.env
-# Use a system-wide Node install (e.g. NodeSource -> /usr/bin/node), NOT an
-# nvm path under a user's home: the service runs as `appuser` with
-# ProtectHome=true, so anything under /home/* is invisible to it.
 ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=3
@@ -21,8 +25,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# Only allow writing to /tmp and the working directory.
 ReadWritePaths=/tmp
 
+# Log to journald (view with: journalctl -u python-pvp-api -f)
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=python-pvp-api

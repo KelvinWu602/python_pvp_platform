@@ -56,6 +56,15 @@ class DBClient:
         except urllib.error.URLError as e:
             raise RuntimeError(f'{method} {path} failed: {e.reason}')
 
+    # -- simulation reference retrieval -------------------------------------
+    def getGameKey(self, game_id):
+        """Fetch the s3 object key of the game logic python file from the API.
+        """
+        result = self._request('GET', f'/api/game/{game_id}')
+        if not result or 'simulation_reference' not in result:
+            raise RuntimeError(f'game not found: {game_id}')
+        return result['simulation_reference']
+
     # -- code retrieval -----------------------------------------------------
     def getCode(self, code_id, file_path):
         """Fetch the code text for `code_id` from the API and write it to
@@ -72,11 +81,10 @@ class DBClient:
             f.write(result['code'])
 
     # -- job lifecycle ------------------------------------------------------
-    def markPending(self, battle_id, simulation_id):
+    def markPending(self, battle_id):
         """Create a fresh simulation_job row (status 'pending') via the API."""
         result = self._request('POST', '/api/internal/simulation-job/pending', {
-            'battle_id': battle_id,
-            'simulation_id': simulation_id,
+            'battle_id': battle_id
         })
         if not result or 'simulation_id' not in result:
             raise RuntimeError(f'failed to markPending')

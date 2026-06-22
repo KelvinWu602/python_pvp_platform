@@ -13,7 +13,6 @@ const authMiddleware = require('../utils/authMiddleware');
 const adminAuthMiddleware = require('../utils/adminAuthMiddleware');
 
 const router = express.Router();
-router.use(express.json());
 router.use(authMiddleware);
 router.use(adminAuthMiddleware);
 

@@ -9,7 +9,6 @@ const authMiddleware = require('../utils/authMiddleware');
 const enrollOwnershipMiddleware = require('../utils/enrollOwnershipMiddleware');
 const router = express.Router();
 
-router.use(express.json());
 router.use(authMiddleware);
 
 // POST /code - upload a piece of code

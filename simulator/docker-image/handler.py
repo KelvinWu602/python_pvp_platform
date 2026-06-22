@@ -23,7 +23,6 @@ import importlib.util
 BUCKET_NAME = os.environ.get('S3_BUCKET', 'python-pvp-store')
 
 # S3 key layout (design.md).
-GAME_OBJECT_KEY_FMT = 'game/{game_id}/game.py'
 VIDEO_OBJECT_KEY_FMT = 'output/{simulation_id}.mp4'
 
 # Lambda only allows writes under /tmp, so anchor the working tree there.
@@ -86,7 +85,7 @@ def run_simulation(event, s3_client, db_client):
         os.makedirs(d, exist_ok=True)
 
     # 1. Fetch the game definition from S3 and import it.
-    game_key = GAME_OBJECT_KEY_FMT.format(game_id=game_id)
+    game_key = db_client.getGameKey(game_id)
     game_path = os.path.join(GAME_DIR, 'game.py')
     s3_client.download(BUCKET_NAME, game_key, game_path)
     game = load_module('game', game_path)
@@ -162,6 +161,8 @@ def lambda_handler(event, context):
     battle_id = payload['battle_id']
 
     s3_client, db_client = setup_clients()
+
+    simulation_id = None
 
     try:
         # Record the attempt before doing any heavy lifting so the job is never

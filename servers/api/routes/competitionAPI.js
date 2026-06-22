@@ -2,7 +2,6 @@ const pool = require('../utils/db');
 const authMiddleware = require('../utils/authMiddleware');
 const express = require('express');
 const router = express.Router();
-router.use(express.json());
 router.use(authMiddleware);
 
 // POST /game - Create a game
