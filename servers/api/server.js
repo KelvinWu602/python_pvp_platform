@@ -2,11 +2,9 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const userAPI = require('./routes/userAPI');
-const battleRoutes = require('./routes/battleAPI');
-const codeAPI = require('./routes/codeAPI');
-const competitionAPI = require('./routes/competitionAPI');
-const internalAPI = require('./routes/internalAPI');
+const userRoutes = require('./routes/user');
+const rootRoutes = require('./routes/root');
+const publicRoutes = require('./routes/public');
 const pool = require('./utils/db');
 
 const app = express();
@@ -19,11 +17,9 @@ app.use(cors());
 app.use(express.json());
 
 // Mount the route modules with base paths
-app.use('/api/battle', battleRoutes);     
-app.use('/api/code', codeAPI); 
-app.use('/api/competition', competitionAPI);   
-app.use('/api/internal', internalAPI);
-app.use('/api/user', userAPI);
+app.use('/admin', rootRoutes);
+app.use('/public', publicRoutes);
+app.use('/', userRoutes);
 
 // Basic error handler (optional but recommended)
 app.use((err, req, res, next) => {

@@ -1,79 +1,142 @@
-Lambda Handler File structure:
+# Simulator Lambda Design
 
+## Handler file structure
+
+```
 /app
-    - /handler.py
+    - /handler.py            (orchestrator: fetch, run, callback)
+    - /sandbox.py            (PlayerWorker — sandboxed subprocess manager)
+    - /_worker.py            (child process entry — reads stdin, execs user code, writes stdout)
     - /clients
-        - /s3Client.py
-        - /rdsClient.py
+        - /s3Client.py       (boto3 S3 — game download + replay upload)
+        - /dbClient.py       (HTTP API client — snapshot + competition + callback)
     - /testClients
-        - /s3Client.py
-        - /rdsClient.py
-    - /game
-        - /game.py
-    - /strategies
-        - /a.py
-        - /b.py
-    - /output
-        - /battle_id_time.mp4
+        - /s3Client.py       (local file-system stub)
+        - /dbClient.py       (inherits from production dbClient)
+    - /game                  (downloaded game.py placed here at runtime)
+    - /output                (replay .mp4 written here at runtime)
+```
 
-s3 bucket name: python-pvp-store
+## S3 bucket layout
 
-under the bucket
-/game
-    - /{game_id}/game.py
-    - /{game_id}/game.py
-    - /{game_id}/game.py
-/output
-    - /{simulation_id}.mp4
+`s3://python-pvp-store/`
+- `/game/<key>/game.py`        — game engine (key stored in competition.game_reference)
+- `/helper/<key>/helper.py`    — optional helper module (competition.helper_reference)
+- `/output/<battle_id>.mp4`    — rendered replay video
 
-Note: player strategy code is NOT stored in S3. It is stored in the app.code
-table in RDS (code text column) and fetched via dbClient.getCode. S3 only
-holds game definitions and rendered replay videos.
+Player strategy code is NOT stored in S3. It lives in `app.snapshot` table
+in the DB and is fetched via the API's `GET /admin/snapshot/:id` endpoint.
 
-Execution Flow:
+## SQS event payload
 
-get event object
-- battle_id (represent the logical battle between player a and b, same battle id will be used even if it is re-run multiple times)
-- simulation_id (represent this lambda invocation)
-- game_id (represent the game logic)
-- a_user_id (represent player a)
-- b_user_id (represent player b)
-- a_code_id (represent player a's code_id)
-- b_code_id (represent player b's code_id)
+```json
+{
+  "battle_id":       "uuid (app.battle.id)",
+  "competition_id":  "uuid (app.competition.id)",
+  "is_test":         true/false,
+  "a_user_id":       "uuid",
+  "b_user_id":       "uuid",
+  "a_snapshot_id":   "uuid (app.snapshot.id for player A)",
+  "b_snapshot_id":   "uuid (app.snapshot.id for player B)"
+}
+```
 
-set up clients depending on running mode:
-if running mode is test:
-- set up the local testing clients
-if running mode is production
-- set up the production clients
+No `simulation_id` — the battle_id itself is the stable identity across retries.
 
-s3Client should support:
-- constructor (Please let me know what auth is needed for lambda to access s3 bucket)
-- download(bucket_name, object_key, file_path)
-- upload(bucket_name, object_key, file_path)
+## Execution flow (main Lambda)
 
-s3Client (TEST) should support:
-- constructor
-- download(bucket_name (ignored), object_key (ignored), file_path) : it will check whether a file specified at file_path already exists, otherwise, raise the same error as if s3 download has a wrong object_key
+1. Parse SQS event → extract battle payload.
+2. `setup_clients()` — instantiate S3 + API clients; `LAMBDA_CALLBACK_TOKEN` captured in `db_client.token`, then stripped from `os.environ`.
+3. `log_attempt(battle_id, lambda_request_id, start_time)` → API `PUT /admin/battle-attempt/:id`
+   → INSERTs execution_log row with NULL end_time_utc (breadcrumb for finding CloudWatch logs).
+4. Seed RNG with `hash(battle_id)` — deterministic retries produce the same result.
+5. `fetch_competition(competition_id)` → API GET /competition/:id
+   → get game_reference, helper_reference, manifest_reference (S3 keys).
+6. `fetch_snapshot(a_snapshot_id)` / `fetch_snapshot(b_snapshot_id)` → API GET /admin/snapshot/:id
+   → get code text for both players.
+7. Download game engine + helper from S3 using competition keys → /tmp/game/game.py, /tmp/sandbox/helper.py.
+8. Create sandboxed `PlayerWorker` subprocesses for each player (pass user code + helper path via stdin).
+9. Import game module (trusted, runs in main process — not sandboxed).
+10. `game.init()` → `game.simulate(worker_a, worker_b)` → result dict.
+    Each frame: game calls worker_a(sensors, telemetry) → IPC to child → update() → result back.
+10. `game.export_video(path)` → local .mp4 file.
+11. Upload replay to s3://python-pvp-store/output/<battle_id>.mp4.
+12. `callback_battle(battle_id, ...)` → API `PUT /admin/battle/:id`
+    → sets infra_ok/input_ok + INSERTs execution_log (one tx in the API).
+13. On **any** failure, the Lambda re-raises and returns an error. SQS redrives the message.
+    The main Lambda never writes failure records — it only records success.
 
-dbClient should support:
-- constructor (Set up db connection using env vars)
-- getCode(code_id, file_path): use a select query to get the code string, then store it at file_path
-- markPending(battle_id, simulation_id)
-- markComplete(battle_id, simulation_id, winner_user_id, loser_user_id, result, battle_video_reference)
-- markFailed (execution_log) : put the error message into db.
+## Sandbox (PlayerWorker)
 
-dbClient (TEST) is the same as the normal dbClient
+Each player strategy runs in a separate child process with kernel-enforced limits:
 
-then markPending first, this will add a new record in the db simulation table
+| Limit | Value | Blocks |
+|-------|-------|--------|
+| `RLIMIT_CPU` | 1 second | Infinite loops (kernel sends SIGXCPU) |
+| `RLIMIT_NPROC` | 0 | `fork()`, `os.system()`, `subprocess` |
+| `RLIMIT_FSIZE` | 0 | File writes (`open()`, `tempfile`) |
+| `RLIMIT_AS` | 64 MB | Memory exhaustion attacks |
 
-then start download the game code from s3 bucket using game_id, place it under /game folder. 
+The parent sends JSON messages via stdin; the child responds on stdout:
 
-then download the player strategies from db using code_ids, place them under /strategis folder. Name player_a's code as a.py, and b as b.py.
+```
+Parent → Child (startup): {"user_code": "...", "helper_dir": "/tmp/sandbox"}
+Child  → Parent:           {"ok": true}
 
-then initialize the game object.
-then run the simulation
-then get the result 
+Parent → Child (per frame): {"sensors": [...], "telemetry": {...}}
+Child  → Parent:            {"ok": true, "a1": ..., "a2": ...}
+                            {"ok": false, "error": "..."}
+```
 
-if everything goes fine, markComplete
-if anything goes wrong, markFailed
+If the child crashes or times out, `PlayerWorker` respawns it and returns `(0.0, 0.0)` for that frame. After 3 consecutive failures per worker, the exception propagates and the whole battle fails.
+
+The helper module (admin-provided) is written to `/tmp/sandbox/helper.py` by the parent before spawning workers. The child inserts `/tmp/sandbox` into `sys.path`, so user code can `import helper` and call its functions. The helper runs inside the same sandboxed child with the same rlimits.
+
+The game engine itself is NOT sandboxed — it runs in the main Lambda process as a trusted Python module loaded via `importlib`. Only player strategies run in subprocesses.
+
+## Error handling
+
+| Failure source          | What happens | Eventually |
+|-------------------------|-------------|------------|
+| API/S3 unavailable (setup failed) | Exception raised → SQS retries | DLQ consumer writes infra_ok=false after maxReceiveCount |
+| User code crash | Exception raised → SQS retries | DLQ consumer writes infra_ok=false |
+| Lambda timeout | No handler code fires → SQS retries after visibility timeout | DLQ consumer writes infra_ok=false |
+| Callback PUT fails | Exception raised → SQS retries | Re-executes simulation (deterministic RNG → same result) → callback retries |
+
+The API's `PUT /admin/battle/:id` uses `WHERE infra_ok IS NULL` so a late retry cannot overwrite success.
+
+## SQS topology
+
+```
+POST /enroll/:eid/test (or /battle) → enqueueBattle → python-pvp-battle-queue
+                                                        ├─ maxReceiveCount (3)
+                                                        ├─ visibility timeout (6 min)
+                                                        └─ DLQ: python-pvp-battle-queue-dlq
+                                                                └─ DLQ Consumer Lambda
+                                                                (simulator/dlq_consumer/handler.py)
+```
+
+The DLQ consumer calls `PUT /admin/battle/:id` with `infra_ok=false, input_ok=false`.
+The API handler uses `WHERE infra_ok IS NULL` so a late retry won't overwrite success.
+
+## Env vars
+
+| Variable                | Required | Default            | Description |
+|-------------------------|----------|--------------------|-------------|
+| RUNNING_MODE            | Yes      | production         | production → clients/ (boto3 + HTTP API), test → testClients/ |
+| S3_BUCKET               | Yes      | python-pvp-store   | S3 bucket for game files + replay videos |
+| LAMBDA_CALLBACK_BASE_URL| Yes      | —                  | API server base URL (e.g. https://api.example.com) |
+| LAMBDA_CALLBACK_TOKEN   | Yes      | —                  | Root Bearer token for API auth |
+| LAMBDA_CALLBACK_TIMEOUT | No       | 10                 | Per-request timeout in seconds |
+| WORK_DIR                | No       | /tmp               | Working directory root (Lambda only allows writes to /tmp) |
+
+## API endpoints the Lambda calls
+
+| Method | Path                  | Auth       | Purpose |
+|--------|-----------------------|------------|---------|
+| GET    | /competition/:id      | Root token | Fetch competition (game_reference for S3) |
+| GET    | /admin/snapshot/:id   | Root token | Fetch snapshot code text |
+| PUT    | /admin/battle/:id     | Root token | Write result + INSERT execution_log |
+
+All authenticated with `Authorization: Bearer <LAMBDA_CALLBACK_TOKEN>`.
+Root token bypasses user-route role checks (authorization.js).

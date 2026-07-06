@@ -8,7 +8,7 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'python_pvp',
   max: parseInt(process.env.DB_MAX_CONN) || 25,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
   // RDS requires SSL. Through the SSH tunnel the cert's hostname is the RDS
   // endpoint, not localhost, so disable hostname verification for local dev.
   ssl: { rejectUnauthorized: false },

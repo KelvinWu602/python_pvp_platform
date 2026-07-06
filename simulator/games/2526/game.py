@@ -525,7 +525,7 @@ class Game(BaseGame):
 # The handler imports this module and calls init() / simulate() / export_video()
 # at module scope (not on a Game instance), so we keep a single module-level
 # Game instance and expose thin wrappers over it.
-_GAME = Game()
+_GAME = Game() 
 
 
 def init():

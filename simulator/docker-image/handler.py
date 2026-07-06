@@ -1,42 +1,55 @@
 import os
-import sys
 import json
+import random
 import importlib.util
+import sys
+
+import numpy as np
+
+from sandbox import PlayerWorker, UserCodeError
 
 
-# AWS Lambda simulator entry point.
+# AWS Lambda battle handler.
 #
-# Invoked directly (the event IS the payload dict, not an API Gateway
-# envelope). Expected event (see simulator/design.md):
+# Event-source mapped to the battle SQS queue (BatchSize=1). Expected event:
 #   {
-#     "battle_id":      "...",   # logical battle between a and b (stable across re-runs)
-#     "game_id":        "...",   # which game logic to run
-#     "a_user_id":      "...",   # player a
-#     "b_user_id":      "...",   # player b
-#     "a_code_id":      "...",   # player a's strategy
-#     "b_code_id":      "..."    # player b's strategy
+#     "battle_id":        "uuid",
+#     "competition_id":   "uuid",
+#     "is_test":          false,
+#     "a_user_id":        "uuid",
+#     "b_user_id":        "uuid",
+#     "a_snapshot_id":    "uuid",
+#     "b_snapshot_id":    "uuid"
 #   }
+#
+# Flow:
+#   1. Log attempt to execution_log (start_time, lambda_request_id → NULL end_time_utc).
+#   2. Fetch both snapshots via API (player code).
+#   3. Fetch competition via API (S3 keys for game engine + optional helper).
+#   4. Download game definition and helper from S3.
+#   5. Create sandboxed subprocess workers for both players.
+#   6. Import game engine (trusted) and run simulation.
+#   7. Upload replay video to S3.
+#   8. PUT callback to API with result (infra_ok=true, input_ok=true).
+#
+# On any failure, the Lambda raises — the SQS message is NOT deleted, so it
+# retries. After maxReceiveCount, the message goes to the DLQ, where the DLQ
+# consumer writes infra_ok=false, input_ok=false. The main Lambda never writes
+# failure records; it only records success.
 
-# S3 bucket holding game definitions and rendered replay videos. Player
-# strategy code is NOT in S3 - it lives in the app.code table in RDS and is
-# fetched via db_client.getCode (see step 2 in run_simulation).
 BUCKET_NAME = os.environ.get('S3_BUCKET', 'python-pvp-store')
 
-# S3 key layout (design.md).
-VIDEO_OBJECT_KEY_FMT = 'output/{simulation_id}.mp4'
+VIDEO_OBJECT_KEY_FMT = 'output/{battle_id}.mp4'
 
-# Lambda only allows writes under /tmp, so anchor the working tree there.
 WORK_DIR = os.environ.get('WORK_DIR', '/tmp')
 GAME_DIR = os.path.join(WORK_DIR, 'game')
-STRATEGIES_DIR = os.path.join(WORK_DIR, 'strategies')
+HELPER_DIR = os.path.join(WORK_DIR, 'sandbox')
 OUTPUT_DIR = os.path.join(WORK_DIR, 'output')
 
-# Directory holding this file, so client modules resolve regardless of cwd.
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_module(module_name, file_path):
-    """Dynamically import a module from a file path. Returns None on failure."""
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     if spec and spec.loader:
         module = importlib.util.module_from_spec(spec)
@@ -47,14 +60,7 @@ def load_module(module_name, file_path):
 
 
 def setup_clients():
-    """Load the S3 and DB client modules and instantiate them. The module set
-    depends on RUNNING_MODE so tests can swap in local fakes:
-      - 'test'        -> ./testClients (local, no network)
-      - 'production'  -> ./clients     (boto3 S3 + HTTP API db client)
-    """
-    running_mode = os.environ.get('RUNNING_MODE', 'production')
-    base = os.path.join(HERE, 'testClients' if running_mode == 'test' else 'clients')
-
+    base = os.path.join(HERE, 'clients')
     s3_module = load_module('s3Client', os.path.join(base, 's3Client.py'))
     db_module = load_module('dbClient', os.path.join(base, 'dbClient.py'))
     if s3_module is None:
@@ -65,91 +71,9 @@ def setup_clients():
     return s3_module.S3Client(), db_module.DBClient()
 
 
-def run_simulation(event, s3_client, db_client):
-    """Download the game + both strategies, run the match, export the replay
-    video, upload it, and return (winner_user_id, loser_user_id, result,
-    video_key).
-
-    Mapping: the game reports a winner as 'a' / 'b' / None. We translate that
-    into the player user ids carried on the event so the DB stores user-level
-    results."""
-    simulation_id = event['simulation_id']
-    game_id = event['game_id']
-    a_user_id = event['a_user_id']
-    b_user_id = event['b_user_id']
-    a_code_id = event['a_code_id']
-    b_code_id = event['b_code_id']
-
-    # Ensure the working directories exist before downloading into them.
-    for d in (GAME_DIR, STRATEGIES_DIR, OUTPUT_DIR):
-        os.makedirs(d, exist_ok=True)
-
-    # 1. Fetch the game definition from S3 and import it.
-    game_key = db_client.getGameKey(game_id)
-    game_path = os.path.join(GAME_DIR, 'game.py')
-    s3_client.download(BUCKET_NAME, game_key, game_path)
-    game = load_module('game', game_path)
-    if game is None:
-        raise RuntimeError(f'failed to import game: {game_id}')
-
-    # 2. Fetch both player strategies from the DB and import them. Dynamic
-    #    load (not `from strategies.a import ...`) because the files don't
-    #    exist until downloaded at runtime.
-    a_path = os.path.join(STRATEGIES_DIR, 'a.py')
-    b_path = os.path.join(STRATEGIES_DIR, 'b.py')
-    db_client.getCode(a_code_id, a_path)
-    db_client.getCode(b_code_id, b_path)
-
-    a_module = load_module('strategy_a', a_path)
-    b_module = load_module('strategy_b', b_path)
-    if a_module is None or not hasattr(a_module, 'update'):
-        raise RuntimeError(f'failed to import player a strategy: {a_code_id}')
-    if b_module is None or not hasattr(b_module, 'update'):
-        raise RuntimeError(f'failed to import player b strategy: {b_code_id}')
-
-    player_a_strategy = a_module.update
-    player_b_strategy = b_module.update
-
-    # 3. Run the match. Module-level game interface:
-    #      game.init()
-    #      result = game.simulate(a, b)
-    #      game.export_video(path)
-    game.init()
-    result = game.simulate(player_a_strategy, player_b_strategy)
-    result = result or {}
-
-    local_video_path = os.path.join(OUTPUT_DIR, f'{simulation_id}.mp4')
-    game.export_video(local_video_path)
-
-    # 4. Upload the replay to S3.
-    video_key = VIDEO_OBJECT_KEY_FMT.format(simulation_id=simulation_id)
-    s3_client.upload(BUCKET_NAME, video_key, local_video_path)
-
-    # 5. Resolve winner/loser user ids from the reported winner tag.
-    winner_tag = result.get('winner')  # 'a', 'b', or None
-    if winner_tag == 'a':
-        winner_user_id, loser_user_id = a_user_id, b_user_id
-    elif winner_tag == 'b':
-        winner_user_id, loser_user_id = b_user_id, a_user_id
-    else:
-        winner_user_id, loser_user_id = None, None  # draw / no winner
-
-    return winner_user_id, loser_user_id, result, video_key
-
-
 def extract_payload(event):
-    """Return the battle payload dict from the Lambda event.
-
-    Supports two invocation shapes:
-      - SQS trigger (production): the event is an SQS batch. With the event
-        source mapping configured BatchSize=1 there is exactly one record;
-        the payload is JSON in record['body'].
-      - Direct invoke (tests / manual): the event IS the payload dict (see
-        simulator/test-guide.md), so it's returned as-is.
-    """
     records = event.get('Records') if isinstance(event, dict) else None
     if records:
-        # BatchSize=1, so there is a single record to process.
         return json.loads(records[0]['body'])
     return event
 
@@ -157,41 +81,99 @@ def extract_payload(event):
 def lambda_handler(event, context):
     payload = extract_payload(event)
 
-    # battle_id are read first so we can always report failure.
     battle_id = payload['battle_id']
+    competition_id = payload['competition_id']
+    a_snapshot_id = payload['a_snapshot_id']
+    b_snapshot_id = payload['b_snapshot_id']
+    a_user_id = payload['a_user_id']
+    b_user_id = payload['b_user_id']
 
     s3_client, db_client = setup_clients()
 
-    simulation_id = None
+    os.environ.pop('LAMBDA_CALLBACK_TOKEN', None)
 
+    lambda_request_id = getattr(context, 'log_stream_name', 'unknown')
+
+    # ─── ATTEMPT LOG ────────────────────────────────────────────
+    db_client.log_attempt(battle_id, lambda_request_id)
+
+    # ─── DETERMINISTIC RNG for consistent retries ───────────────
+    seed = hash(battle_id)
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+
+    worker_a = None
+    worker_b = None
+
+    # ─── SETUP PHASE ────────────────────────────────────────
+    for d in (GAME_DIR, OUTPUT_DIR):
+        os.makedirs(d, exist_ok=True)
+
+    competition = db_client.fetch_competition(competition_id)
+    a_code = db_client.fetch_snapshot(a_snapshot_id)
+    b_code = db_client.fetch_snapshot(b_snapshot_id)
+
+    game_path = os.path.join(GAME_DIR, 'game.py')
+    s3_client.download(BUCKET_NAME, competition['game_reference'], game_path)
+
+    helper_path = os.path.join(HELPER_DIR, 'helper.py')
+    s3_client.download(BUCKET_NAME, competition['helper_reference'], helper_path)
+
+    game = load_module('game', game_path)
+    if game is None:
+        raise RuntimeError('failed to import game')
+    if not hasattr(game, 'init') or not hasattr(game, 'simulate') or not hasattr(game, 'export_video'):
+        raise RuntimeError('game module missing required interface')
+    
     try:
-        # Record the attempt before doing any heavy lifting so the job is never
-        # invisible while it runs.
-        simulation_id = db_client.markPending(battle_id)
+        worker_a = PlayerWorker(a_code, helper_dir=HELPER_DIR)
+        worker_b = PlayerWorker(b_code, helper_dir=HELPER_DIR)
+        # ─── EXECUTION PHASE ─────────────────────────────────────
+        game.init()
+        result = game.simulate(worker_a, worker_b)
+        result = result or {}
 
-        winner_user_id, loser_user_id, result, video_key = run_simulation(
-            payload, s3_client, db_client
+        local_video_path = os.path.join(OUTPUT_DIR, f'{battle_id}.mp4')
+        game.export_video(local_video_path)
+
+        video_key = VIDEO_OBJECT_KEY_FMT.format(battle_id=battle_id)
+        s3_client.upload(BUCKET_NAME, video_key, local_video_path)
+
+        winner_tag = result.get('winner')
+        if winner_tag == 'a':
+            winner_user_id, loser_user_id = a_user_id, b_user_id
+        elif winner_tag == 'b':
+            winner_user_id, loser_user_id = b_user_id, a_user_id
+        else:
+            winner_user_id, loser_user_id = None, None
+
+        db_client.callback_battle(
+            battle_id=battle_id,
+            infra_ok=True, input_ok=True,
+            winner_user_id=winner_user_id,
+            loser_user_id=loser_user_id,
+            draw=(winner_user_id is None),
+            video_reference=video_key
         )
 
-        db_client.markComplete(
-            battle_id,
-            simulation_id,
-            winner_user_id,
-            loser_user_id,
-            result,
-            video_key,
+        print(f'battle {battle_id} completed')
+        return {'statusCode': 200, 'battle_id': battle_id}
+
+    except UserCodeError:
+        db_client.callback_battle(
+            battle_id=battle_id,
+            infra_ok=True, input_ok=False,
+            winner_user_id=None, loser_user_id=None,
+            draw=None, video_reference=None,
         )
-        return {'statusCode': 200, 'simulation_id': simulation_id}
+        raise
     except Exception as e:
-        # Record the failure so the job doesn't stay 'pending' forever.
-        print(f'simulation {simulation_id} failed: {e}')
-        try:
-            db_client.markFailed(simulation_id, str(e))
-        except Exception as inner:
-            # Never mask the original error if the failure write also fails.
-            print(f'failed to mark simulation {simulation_id} failed: {inner}')
-        return {'statusCode': 500, 'simulation_id': simulation_id, 'error': str(e)}
+        print(f'battle {battle_id} failed: {e}')
+        raise
     finally:
+        for w in (worker_a, worker_b):
+            if w:
+                w.close()
         close = getattr(db_client, 'close', None)
         if callable(close):
             close()

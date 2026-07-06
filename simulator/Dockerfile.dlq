@@ -1,0 +1,20 @@
+# AWS Lambda container image for the battle DLQ consumer.
+#
+# Build context is simulator/ (this directory). Build & push, e.g.:
+#   docker build -t python-pvp-simulator-dlq -f Dockerfile.dlq .
+#   docker tag python-pvp-simulator-dlq <acct>.dkr.ecr.<region>.amazonaws.com/python-pvp-simulator-dlq
+#   docker push <acct>.dkr.ecr.<region>.amazonaws.com/python-pvp-simulator-dlq
+#
+# Runtime env vars (see clients/dbClient.py):
+#   LAMBDA_CALLBACK_BASE_URL base URL of the API server
+#   LAMBDA_CALLBACK_TOKEN   root Bearer token for API callback auth
+#   LAMBDA_CALLBACK_TIMEOUT per-request timeout seconds (default 10)
+#
+# No heavy deps needed — dbClient uses stdlib urllib only.
+
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY dlq_consumer/handler.py ${LAMBDA_TASK_ROOT}/handler.py
+COPY docker-image/clients/ ${LAMBDA_TASK_ROOT}/clients/
+
+CMD ["handler.lambda_handler"]

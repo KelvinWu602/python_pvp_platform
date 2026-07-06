@@ -18,41 +18,42 @@ envelope). See `docker-image/handler.py`:
 
 ```json
 {
-  "battle_id":     "<uuid of app.battle row>",
-  "simulation_id": "<uuid for this run; becomes app.simulation_job.id>",
-  "game_id":       "<uuid of app.game row>",
-  "a_user_id":     "<uuid of player A user>",
-  "b_user_id":     "<uuid of player B user>",
-  "a_code_id":     "<uuid of app.code row for A>",
-  "b_code_id":     "<uuid of app.code row for B>"
+  "battle_id":       "<uuid of app.battle row>",
+  "competition_id":  "<uuid of app.competition row>",
+  "is_test":         false,
+  "a_user_id":       "<uuid of player A user>",
+  "b_user_id":       "<uuid of player B user>",
+  "a_snapshot_id":   "<uuid of app.snapshot row for A>",
+  "b_snapshot_id":   "<uuid of app.snapshot row for B>"
 }
 ```
 
 Flow the handler runs:
-1. `markPending(battle_id, simulation_id)` → **INSERTs** a new `app.simulation_job` row.
-2. Download `game/<game_id>/game.py` from S3 (`python-pvp-store`).
-3. `getCode(a_code_id)` / `getCode(b_code_id)` → read `app.code.code`, write `a.py` / `b.py`.
-4. Run `init()` → `simulate(a, b)` → `export_video()`.
-5. Upload replay to `output/<simulation_id>.mp4`.
-6. `markComplete(...)` (or `markFailed(...)` on error).
+1. `fetch_competition(competition_id)` → get `game_reference` (S3 key for game).
+2. `fetch_snapshot(a_snapshot_id)` / `fetch_snapshot(b_snapshot_id)` → get code text.
+3. Download `game/<game_reference>/game.py` from S3 (`python-pvp-store`).
+4. Write `a.py` / `b.py` to /tmp/strategies/, import dynamically.
+5. Run `init()` → `simulate(a, b)` → `export_video()`.
+6. Upload replay to `output/<battle_id>.mp4`.
+7. `callback_battle(...)` → `PUT /admin/battle/:id` (sets infra_ok/input_ok + INSERTs execution_log).
 
 Required env vars (see `docker-image/clients/`):
 
-| Var               | Purpose                                | Local value                       | Deployed Lambda value            |
-|-------------------|----------------------------------------|-----------------------------------|----------------------------------|
-| `RUNNING_MODE`    | `production` or `test`                 | `production`                      | `production`                     |
-| `S3_BUCKET`       | S3 bucket name                         | `python-pvp-store`                | `python-pvp-store`               |
-| `SIM_API_BASE_URL`| API server base URL (no trailing /)    | `http://localhost:3000`           | `https://api.yourdomain.com`     |
-| `SIM_API_TOKEN`   | Service account session token          | (from database/4. service-account.sql) | (set via SSM or Lambda env) |
-| `SIM_API_TIMEOUT` | Per-request timeout in seconds         | `10`                              | `10`                             |
+| Var                      | Purpose                                | Local value                       | Deployed Lambda value            |
+|--------------------------|----------------------------------------|-----------------------------------|----------------------------------|
+| `RUNNING_MODE`           | `production` or `test`                 | `production`                      | `production`                     |
+| `S3_BUCKET`              | S3 bucket name                         | `python-pvp-store`                | `python-pvp-store`               |
+| `LAMBDA_CALLBACK_BASE_URL`| API server base URL (no trailing /)    | `http://localhost:3000`           | `https://api.yourdomain.com`     |
+| `LAMBDA_CALLBACK_TOKEN`  | Root Bearer token for API auth         | (root user_session UUID)          | (set via SSM or Lambda env)      |
+| `LAMBDA_CALLBACK_TIMEOUT`| Per-request timeout in seconds         | `10`                              | `10`                             |
 
 ---
 
 ## 1. Seed the database (via your `localhost:5433` tunnel)
 
-The handler needs an `app.battle` row (FK target for the simulation job) and two
-`app.code` rows. The schema/IDs come from `../database/2. init-db.sql` and
-`3. extension.sql` (UUIDs auto-generate via `gen_random_uuid()`).
+The handler needs an `app.battle` row with both players' snapshots. The
+schema/IDs come from `../database/2. init-db.sql` and `3. extension.sql`
+(UUIDs auto-generate via `gen_random_uuid()`).
 
 Assuming the schema is already created (see `../database/readme.md`). Connect:
 
@@ -60,105 +61,124 @@ Assuming the schema is already created (see `../database/readme.md`). Connect:
 psql "host=localhost port=5433 dbname=python_pvp user=python_pvp_admin sslmode=require"
 ```
 
-Run this seed script. It creates a game, a competition, two users, two enrolls,
-two code rows, and a battle — then prints the IDs you'll put in the event.
+Run this seed script. It creates a root user (for the callback), two users, a
+competition (with NPC snapshot), two enrollments, two player codes with
+snapshots, links them, and creates a battle.
 
 ```sql
--- Wrap in a transaction so a mistake is easy to roll back.
 BEGIN;
 
--- 1. Game. simulation_reference is the game_id segment used in the S3 key
---    game/<game_id>/game.py. We reuse the game's own uuid as that segment.
-INSERT INTO app.game (display_name, simulation_reference)
-VALUES ('maze-2526', 'placeholder')
-RETURNING id AS game_id \gset
-UPDATE app.game SET simulation_reference = :'game_id'::text WHERE id = :'game_id';
+-- 1. Root user for Lambda callback (create once).
+INSERT INTO app.user (username, full_name, hash_password, urole)
+VALUES ('lambda-callback', 'Lambda Callback Service', 'x', 'root')
+ON CONFLICT (username) DO NOTHING
+RETURNING id AS root_user_id \gset
 
--- 2. Competition for the game.
-INSERT INTO app.competition (game_id, display_name, start_time_utc, end_time_utc, enabled)
-VALUES (:'game_id', 'test-comp', now() - interval '1 day', now() + interval '7 days', true)
-RETURNING id AS competition_id \gset
-
--- 3. Two users.
+-- 2. Two player users.
 INSERT INTO app.user (username, full_name, hash_password)
 VALUES ('alice', 'Alice A', 'x') RETURNING id AS a_user_id \gset
 INSERT INTO app.user (username, full_name, hash_password)
 VALUES ('bob', 'Bob B', 'x') RETURNING id AS b_user_id \gset
 
--- 4. Enrollments (one per user in the competition).
+-- 3. NPC code + snapshot (needed for competition).
+INSERT INTO app.code (user_id, name) VALUES (:'root_user_id', '_npc_')
+RETURNING id AS npc_code_id \gset
+INSERT INTO app.snapshot (code_id, code) VALUES (:'npc_code_id',
+$PYCODE$
+def update(sensors, telemetry):
+    return (0.0, 0.0)
+$PYCODE$
+) RETURNING id AS npc_snapshot_id \gset
+
+-- 4. Competition (game_reference = S3 key for game.py, e.g. "games/2526/game.py").
+INSERT INTO app.competition (
+  npc_user_id, npc_snapshot_id, display_name, description,
+  start_time_utc, end_time_utc,
+  game_reference, helper_reference, manifest_reference
+) VALUES (
+  :'root_user_id', :'npc_snapshot_id', 'test-comp', '',
+  now() - interval '1 day', now() + interval '7 days',
+  'games/2526/game.py', '', ''
+) RETURNING id AS competition_id \gset
+
+-- 5. Enrollments.
 INSERT INTO app.enroll (competition_id, user_id)
 VALUES (:'competition_id', :'a_user_id') RETURNING id AS a_enroll_id \gset
 INSERT INTO app.enroll (competition_id, user_id)
 VALUES (:'competition_id', :'b_user_id') RETURNING id AS b_enroll_id \gset
 
--- 5. Player strategies stored as text in app.code.
---    Player A: a simple forward driver. Player B: idle (does nothing).
-INSERT INTO app.code (enroll_id, name, code) VALUES (
-  :'a_enroll_id', 'forward',
+-- 6. Player strategies stored as app.code + app.snapshot.
+INSERT INTO app.code (user_id, name) VALUES (:'a_user_id', 'forward')
+RETURNING id AS a_code_id \gset
+INSERT INTO app.snapshot (code_id, code) VALUES (:'a_code_id',
 $PYCODE$
 def update(sensors, telemetry):
-    # Accelerate both wheels toward a forward cruise speed.
     target = 9.0
     a1 = (target - telemetry['spin1']) * 6.0
     a2 = (target - telemetry['spin2']) * 6.0
     return (a1, a2)
 $PYCODE$
-) RETURNING id AS a_code_id \gset
+) RETURNING id AS a_snapshot_id \gset
 
-INSERT INTO app.code (enroll_id, name, code) VALUES (
-  :'b_enroll_id', 'idle',
+INSERT INTO app.code (user_id, name) VALUES (:'b_user_id', 'idle')
+RETURNING id AS b_code_id \gset
+INSERT INTO app.snapshot (code_id, code) VALUES (:'b_code_id',
 $PYCODE$
 def update(sensors, telemetry):
     return (0.0, 0.0)
 $PYCODE$
-) RETURNING id AS b_code_id \gset
+) RETURNING id AS b_snapshot_id \gset
 
--- 6. The battle (FK target for the simulation_job the handler inserts).
-INSERT INTO app.battle (a_enroll_id, b_enroll_id, a_code_id, b_code_id)
-VALUES (:'a_enroll_id', :'b_enroll_id', :'a_code_id', :'b_code_id')
+-- 7. Link codes to enrollments.
+INSERT INTO app.code_select (enroll_id, code_id, user_id, competition_id)
+VALUES (:'a_enroll_id', :'a_code_id', :'a_user_id', :'competition_id');
+INSERT INTO app.code_select (enroll_id, code_id, user_id, competition_id)
+VALUES (:'b_enroll_id', :'b_code_id', :'b_user_id', :'competition_id');
+
+-- 8. The battle (infra_ok/input_ok both null = pending).
+INSERT INTO app.battle (competition_id, is_test, a_user_id, a_snapshot_id, b_user_id, b_snapshot_id)
+VALUES (:'competition_id', false, :'a_user_id', :'a_snapshot_id', :'b_user_id', :'b_snapshot_id')
 RETURNING id AS battle_id \gset
 
 COMMIT;
 
 -- Print everything you need for the event payload.
 SELECT
-  :'battle_id'   AS battle_id,
-  :'game_id'     AS game_id,
-  :'a_user_id'   AS a_user_id,
-  :'b_user_id'   AS b_user_id,
-  :'a_code_id'   AS a_code_id,
-  :'b_code_id'   AS b_code_id;
+  :'battle_id'       AS battle_id,
+  :'competition_id'  AS competition_id,
+  :'a_user_id'       AS a_user_id,
+  :'b_user_id'       AS b_user_id,
+  :'a_snapshot_id'   AS a_snapshot_id,
+  :'b_snapshot_id'   AS b_snapshot_id;
 ```
 
-Copy the printed IDs. Generate a fresh `simulation_id` yourself (it must be a
-new UUID each run, and must NOT already exist in `app.simulation_job`):
+Copy the printed IDs for the event payload. No `simulation_id` needed — the
+battle_id is the stable identity.
 
-```bash
-python3 -c "import uuid; print(uuid.uuid4())"
-```
-
-> Re-running a battle: keep the same `battle_id`, just use a new `simulation_id`.
+> Re-running a battle: the same `battle_id` can be used again; the callback's
+> `WHERE infra_ok IS NULL` guard ensures only the first callback takes effect.
 
 ---
 
 ## 2. Stage the game definition in S3
 
-The handler downloads `game/<game_id>/game.py`. Upload the simulator game using
-the **same `game_id`** you got above:
+The handler downloads `game/<game_reference>/game.py`. The `game_reference`
+comes from the competition's `game_reference` column (e.g. `games/2526/game.py`).
+Upload the game file to the matching key:
 
 ```bash
 aws s3 cp simulator/games/2526/game.py \
-  "s3://python-pvp-store/game/<game_id>/game.py"
+  "s3://python-pvp-store/games/2526/game.py"
 ```
 
 Verify:
 
 ```bash
-aws s3 ls "s3://python-pvp-store/game/<game_id>/game.py"
+aws s3 ls "s3://python-pvp-store/games/2526/game.py"
 ```
 
-> Player strategies are NOT in S3 — they come from `app.code` (seeded in step 1).
-> The handler will write the replay to `output/<simulation_id>.mp4` itself.
+> Player strategies are NOT in S3 — they come from `app.snapshot` (seeded in step 1).
+> The handler will write the replay to `output/<battle_id>.mp4` itself.
 
 ---
 
@@ -187,9 +207,9 @@ function on `localhost:9000`.
 docker run --rm -p 9000:8080 \
   -e RUNNING_MODE=production \
   -e S3_BUCKET=python-pvp-store \
-  -e SIM_API_BASE_URL=http://localhost:3000 \
-  -e SIM_API_TOKEN='00000000-0000-0000-0000-000000000002' \
-  -e SIM_API_TIMEOUT=10 \
+  -e LAMBDA_CALLBACK_BASE_URL=http://localhost:3000 \
+  -e LAMBDA_CALLBACK_TOKEN='<root-user-session-uuid>' \
+  -e LAMBDA_CALLBACK_TIMEOUT=10 \
   -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
   -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
   -e AWS_SESSION_TOKEN="$AWS_SESSION_TOKEN" \
@@ -208,17 +228,17 @@ In another terminal, POST the event to the RIE:
 ```bash
 curl -s "http://localhost:9000/2015-03-31/functions/function/invocations" \
   -d '{
-    "battle_id":     "<battle_id>",
-    "simulation_id": "<fresh-uuid>",
-    "game_id":       "<game_id>",
-    "a_user_id":     "<a_user_id>",
-    "b_user_id":     "<b_user_id>",
-    "a_code_id":     "<a_code_id>",
-    "b_code_id":     "<b_code_id>"
+    "battle_id":       "<battle_id>",
+    "competition_id":  "<competition_id>",
+    "is_test":         false,
+    "a_user_id":       "<a_user_id>",
+    "b_user_id":       "<b_user_id>",
+    "a_snapshot_id":   "<a_snapshot_id>",
+    "b_snapshot_id":   "<b_snapshot_id>"
   }' | jq
 ```
 
-Expected success: `{"statusCode": 200, "simulation_id": "..."}`.
+Expected success: `{"statusCode": 200, "battle_id": "..."}`.
 
 Then go to step 5 (verify results).
 
@@ -327,7 +347,7 @@ aws lambda create-function \
   --timeout 60 \
   --memory-size 512 \
   --ephemeral-storage Size=1024 \
-  --environment "Variables={RUNNING_MODE=production,S3_BUCKET=python-pvp-store,SIM_API_BASE_URL=https://api.yourdomain.com,SIM_API_TOKEN=<from-database/4. service-account.sql>,SIM_API_TIMEOUT=10}"
+  --environment "Variables={RUNNING_MODE=production,S3_BUCKET=python-pvp-store,LAMBDA_CALLBACK_BASE_URL=https://api.yourdomain.com,LAMBDA_CALLBACK_TOKEN=<root-user-session-uuid>,LAMBDA_CALLBACK_TIMEOUT=10}"
 ```
 
 > - `SIM_API_BASE_URL` must be the **public HTTPS URL** of the API server.
@@ -353,13 +373,13 @@ aws lambda update-function-code \
 ```bash
 cat > /tmp/event.json <<'JSON'
 {
-  "battle_id":     "<battle_id>",
-  "simulation_id": "<fresh-uuid>",
-  "game_id":       "<game_id>",
-  "a_user_id":     "<a_user_id>",
-  "b_user_id":     "<b_user_id>",
-  "a_code_id":     "<a_code_id>",
-  "b_code_id":     "<b_code_id>"
+  "battle_id":       "<battle_id>",
+  "competition_id":  "<competition_id>",
+  "is_test":         false,
+  "a_user_id":       "<a_user_id>",
+  "b_user_id":       "<b_user_id>",
+  "a_snapshot_id":   "<a_snapshot_id>",
+  "b_snapshot_id":   "<b_snapshot_id>"
 }
 JSON
 
@@ -381,26 +401,26 @@ aws logs tail /aws/lambda/python-pvp-simulator --follow
 
 ## 5. Verify the results
 
-### 5a. Database — the simulation job
+### 5a. Database — the battle row
 
 Through the tunnel:
 
 ```bash
 psql "host=localhost port=5433 dbname=python_pvp user=python_pvp_admin sslmode=require" -c \
-"SELECT id, battle_id, status, winner_user_id, loser_user_id,
-        winner_score_gain, loser_score_loss, battle_video_reference, execution_log
-   FROM app.simulation_job
-  WHERE id = '<simulation_id>';"
+"SELECT id, competition_id, is_test, a_user_id, b_user_id,
+        infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference
+   FROM app.battle
+  WHERE id = '<battle_id>';"
 ```
 
-Expect `status = completed`, the winner/loser user ids set (or NULL on a draw),
-scores populated, and `battle_video_reference = output/<simulation_id>.mp4`.
-On failure: `status = failed` and the error in `execution_log`.
+Expect `infra_ok = true`, `input_ok = true`, the winner/loser user ids set
+(or NULL on a draw), and `video_reference = output/<battle_id>.mp4`.
+On failure: `infra_ok = false` (setup error) or `input_ok = false` (user code error).
 
 ### 5b. S3 — the replay video
 
 ```bash
-aws s3 cp "s3://python-pvp-store/output/<simulation_id>.mp4" /tmp/replay.mp4
+aws s3 cp "s3://python-pvp-store/output/<battle_id>.mp4" /tmp/replay.mp4
 open /tmp/replay.mp4   # macOS
 ```
 
@@ -421,12 +441,12 @@ and wiring checks, not a full render against real S3 assets.
 
 | Symptom | Likely cause |
 |---|---|
-| `markPending` fails with FK violation | `battle_id` doesn't exist in `app.battle`. |
-| `duplicate key` on `simulation_job` | `simulation_id` was reused — generate a fresh UUID. |
-| `code not found: <id>` | wrong `a_code_id`/`b_code_id`, or rows not seeded. |
-| S3 404 on game download | game not uploaded to `game/<game_id>/game.py`, or wrong `game_id`. |
-| Local container can't reach API | `SIM_API_BASE_URL=http://localhost:3000` is correct when the tunnel is active; confirm `npm start` is running on the API server and the tunnel (`localhost:5433`) is up. |
-| Lambda can't reach API server | The API server must be publicly reachable on HTTPS (port 443). Check the API EC2 security group allows 443 inbound, and the Lambda has internet egress. `SIM_API_BASE_URL` must be `https://` not `http://`. |
+| `snapshot not found: <id>` | wrong `a_snapshot_id`/`b_snapshot_id`, or rows not seeded in `app.snapshot`. |
+| `competition not found` | wrong `competition_id`, or the competition row references a nonexistent snapshot. |
+| S3 404 on game download | game not uploaded to the key in `competition.game_reference`. |
+| Local container can't reach API | `LAMBDA_CALLBACK_BASE_URL=http://localhost:3000` is correct when the API server is running; confirm `npm start` on the API server and the tunnel (`localhost:5433`) is up. |
+| Lambda can't reach API server | The API server must be publicly reachable on HTTPS (port 443). Check the API EC2 security group allows 443 inbound, and the Lambda has internet egress. `LAMBDA_CALLBACK_BASE_URL` must be `https://` not `http://`. |
 | Lambda can't reach S3 | Lambda runs in AWS-managed network and reaches S3 publicly; no VPC gateway endpoint needed. If this fails, check the execution role's S3 policy (`python-pvp-store-rw-policy`). |
 | `cannot import cv2` / libGL error | rebuild image; the Dockerfile installs `mesa-libGL`/`glib2` for headless opencv. |
-| Strategy error in `execution_log` | the player code in `app.code` raised; check it defines `update(sensors, telemetry)`. |
+| Strategy error in `execution_log` | the player code in `app.snapshot` raised; check it defines `update(sensors, telemetry)`. |
+| Callback doesn't update battle | `PUT /admin/battle/:id` uses `WHERE infra_ok IS NULL` — if infra_ok is already set, the update is skipped. This is expected on late DLQ retries after a successful first run. |

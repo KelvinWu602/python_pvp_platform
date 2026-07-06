@@ -8,34 +8,36 @@ This guide walks through deploying `python-pvp-simulator` — the AWS Lambda fun
 
 The simulator Lambda is triggered by SQS messages representing battle jobs. It:
 
-1. **Marks the job `pending`** by calling the API server's internal endpoint.
-2. **Downloads the game definition** from S3 (`game/<game_id>/game.py`).
-3. **Fetches both players' strategy code** from the API server (not S3) — their code lives in `app.code` in RDS.
+1. **Fetches both players' snapshot code** from the API (`GET /admin/snapshot/:id`).
+2. **Fetches the competition** from the API (`GET /competition/:id`) to get the game S3 key.
+3. **Downloads the game definition** from S3 (`game/<game_reference>/game.py`).
 4. **Runs the match** by dynamically importing the game and both strategy modules.
-5. **Uploads the replay video** to S3 (`output/<simulation_id>.mp4`).
-6. **Marks the job `completed` or `failed`** via the API server.
+5. **Uploads the replay video** to S3 (`output/<battle_id>.mp4`).
+6. **Callbacks the result** via the API (`PUT /admin/battle/:id`) which sets `infra_ok`/`input_ok` and inserts an `execution_log` row in one transaction.
 
 ```
-API server (POST /api/battle)
+API server (POST /enroll/:eid/test or /battle)
     │
-    ├─ INSERT app.battle
+    ├─ INSERT app.battle (infra_ok=NULL, input_ok=NULL)
     └─ SendMessage → python-pvp-battle-queue (SQS)
                            │
                            ▼
                     python-pvp-simulator (Lambda, BatchSize=1)
                            │
-                           ├─ GET /api/internal/code/:id  (player strategies)
+                           ├─ GET /competition/:id  (game_reference for S3)
                            │
-                           ├─ GET /api/internal/simulation-job/pending  (mark job started)
+                           ├─ GET /admin/snapshot/:id  (player A code)
                            │
-                           ├─ S3 download  game/<game_id>/game.py
+                           ├─ GET /admin/snapshot/:id  (player B code)
                            │
-                           ├─ run match → S3 upload  output/<simulation_id>.mp4
+                           ├─ S3 download  game/<game_reference>/game.py
                            │
-                           ├─ GET /api/internal/simulation-job/complete  (or /failed)
+                           ├─ run match → S3 upload  output/<battle_id>.mp4
+                           │
+                           ├─ PUT /admin/battle/:id  (write result + execution_log)
                            │
                            ▼
-                    GET /api/battle/:id  →  { simulation_job: { status: 'completed', ... } }
+                    GET /battle/:id  →  { infra_ok: true, input_ok: true, ... }
 ```
 
 **Key design decisions to know before deployment:**
@@ -57,7 +59,7 @@ Before anything else, confirm the following pieces are in place:
 | Docker installed | `docker --version` |
 | AWS CLI configured with sufficient permissions | `aws sts get-caller-identity` |
 | API server deployed and publicly reachable | `curl https://<api-url>/api/competition` returns JSON (auth not required for some routes) |
-| Service account seeded in DB | `database/4. service-account.sql` has been run; the `user_session` row exists with ID `00000000-0000-0000-0000-000000000002` |
+| Root session token configured | A `user_session` row exists for the Lambda's root token (set via SSM or Lambda env) |
 | Game definition uploaded to S3 | See [Step 4 — Upload the Game Definition](#step-4--upload-the-game-definition) |
 | SSM Parameter Store secrets configured | The EC2 deploy guide covers this; the Lambda needs `SIM_API_BASE_URL` and `SIM_API_TOKEN` from SSM |
 
@@ -105,9 +107,9 @@ aws sqs create-queue \
   }'
 ```
 
-`MessageRetentionPeriod: 1209600` = 14 days. Jobs that fail after 3 retries sit here for up to 14 days before being auto-deleted by SQS.
+`MessageRetentionPeriod: 1209600` = 14 days. Battles that fail after 3 retries sit here for up to 14 days before being auto-deleted by SQS.
 
-`VisibilityTimeout: 60` — the DLQ is consumed by nobody (or a manual review process), so a short visibility timeout is fine.
+`VisibilityTimeout: 60` — the DLQ is consumed by the DLQ consumer Lambda (which calls `PUT /admin/battle/:id` with `infra_ok=false`), so a short visibility timeout is fine.
 
 ### 2.2 Create the main battle queue with redrive policy
 
@@ -295,7 +297,7 @@ docker build \
   ./simulator
 
 # Tag for ECR
-docker tag python-pvp-simulator:latest \
+docker tag python-pvp-simulator \
   "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
 ```
 
@@ -342,12 +344,12 @@ aws lambda create-function \
 The Lambda reads these at runtime. The simplest way to set them is via the Lambda's env block; for production use, store the secrets in SSM Parameter Store and inject them via the Lambda's configuration (Environment → Environment variables → Manage environment variables → choose from SSM parameters).
 
 | Variable | Example value | Notes |
-|---|---|---|
+|---|---|---|---|
 | `RUNNING_MODE` | `production` | Always `production` for deployed Lambda. `test` is only for local RIE testing. |
 | `S3_BUCKET` | `python-pvp-store` | The bucket name; no S3 endpoint or region is needed — boto3 resolves from the execution role. |
-| `SIM_API_BASE_URL` | `https://api.yourdomain.com` | The API server's public HTTPS URL. Must be reachable from Lambda over the internet. |
-| `SIM_API_TOKEN` | `00000000-0000-0000-0000-000000000002` | The service account session ID from `database/4. service-account.sql`. Treat as a secret. |
-| `SIM_API_TIMEOUT` | `10` | Per-request timeout in seconds. The API server should respond in <1s; 10s is a generous buffer. |
+| `LAMBDA_CALLBACK_BASE_URL` | `https://api.yourdomain.com` | The API server's public HTTPS URL. Must be reachable from Lambda over the internet. |
+| `LAMBDA_CALLBACK_TOKEN` | `<root-session-uuid>` | Root Bearer token for API callback auth. Create a permanent `user_session` row or use a long-lived token. Treat as a secret. |
+| `LAMBDA_CALLBACK_TIMEOUT` | `10` | Per-request timeout in seconds. The API server should respond in <1s; 10s is a generous buffer. |
 
 ```bash
 aws lambda update-function-configuration \
@@ -355,14 +357,14 @@ aws lambda update-function-configuration \
   --environment 'Variables={
     "RUNNING_MODE=production",
     "S3_BUCKET=python-pvp-store",
-    "SIM_API_BASE_URL=https://api.yourdomain.com",
-    "SIM_API_TOKEN=00000000-0000-0000-0000-000000000002",
-    "SIM_API_TIMEOUT=10"
+    "LAMBDA_CALLBACK_BASE_URL=https://api.yourdomain.com",
+    "LAMBDA_CALLBACK_TOKEN=<root-session-uuid>",
+    "LAMBDA_CALLBACK_TIMEOUT=10"
   }' \
   --region ap-southeast-1
 ```
 
-> **Security note on `SIM_API_TOKEN`:** This is a long-lived root credential. In production, store it in AWS Secrets Manager and grant the Lambda `secretsmanager:GetSecretValue` so you can reference it as `{{resolve:secretsmanager:SIM_API_TOKEN}}` instead of putting it in plain text in the environment variables. For SSM-based injection, the same principle applies — store as `SecureString` and reference via the SSM parameter ARN.
+> **Security note on `LAMBDA_CALLBACK_TOKEN`:** This is a long-lived root credential. In production, store it in AWS Secrets Manager and grant the Lambda `secretsmanager:GetSecretValue` so you can reference it as `{{resolve:secretsmanager:LAMBDA_CALLBACK_TOKEN}}` instead of putting it in plain text in the environment variables. For SSM-based injection, the same principle applies — store as `SecureString` and reference via the SSM parameter ARN.
 
 ---
 
@@ -399,13 +401,13 @@ aws lambda create-event-source-mapping \
 > **What happens when the Lambda is triggered:** The SQS event source mapping delivers the message body as the Lambda's `event` argument. The handler's `extract_payload()` function unwraps it (see `docker-image/handler.py`). The expected message body (the JSON payload) is:
 > ```json
 > {
->   "battle_id":     "<uuid>",
->   "simulation_id": "<uuid>",
->   "game_id":       "<uuid>",
->   "a_user_id":     "<uuid>",
->   "b_user_id":     "<uuid>",
->   "a_code_id":     "<uuid>",
->   "b_code_id":     "<uuid>"
+>   "battle_id":       "<uuid>",
+>   "competition_id":  "<uuid>",
+>   "is_test":         true,
+>   "a_user_id":       "<uuid>",
+>   "b_user_id":       "<uuid>",
+>   "a_snapshot_id":   "<uuid>",
+>   "b_snapshot_id":   "<uuid>"
 > }
 > ```
 
@@ -518,52 +520,52 @@ The test message will write to the DLQ after 3 failed retries if the game or cod
 ## Runtime Environment Variable Reference
 
 | Variable | Required | Default | Description |
-|---|---|---|---|
+|---|---|---|---|---|
 | `RUNNING_MODE` | Yes | `production` | `production` → uses `clients/` (boto3 S3 + HTTP API dbClient). `test` → uses `testClients/` (local file doubles). Always `production` on Lambda. |
 | `S3_BUCKET` | Yes | `python-pvp-store` | S3 bucket name. No path prefixes here — keys are constructed in `handler.py`. |
-| `SIM_API_BASE_URL` | Yes | — | Full base URL of the API server, e.g. `https://api.yourdomain.com`. The Lambda calls this over HTTPS to access `/api/internal/*`. Must be reachable from Lambda. |
-| `SIM_API_TOKEN` | Yes | — | Long-lived service-account session token (Bearer). ID of the `user_session` row for `simulator-service`. Rotate by updating the row in the DB and the SSM parameter. |
-| `SIM_API_TIMEOUT` | No | `10` | Per-request timeout in seconds for API calls. The API should respond in <1s; 10s is a generous safety margin. |
+| `LAMBDA_CALLBACK_BASE_URL` | Yes | — | Full base URL of the API server, e.g. `https://api.yourdomain.com`. The Lambda calls this over HTTPS to access `/competition/*`, `/admin/snapshot/*`, `/admin/battle/*`. Must be reachable from Lambda. |
+| `LAMBDA_CALLBACK_TOKEN` | Yes | — | Root Bearer token for API callback auth. Create a permanent `user_session` row with `urole=root`. |
+| `LAMBDA_CALLBACK_TIMEOUT` | No | `10` | Per-request timeout in seconds for API calls. The API should respond in <1s; 10s is a generous safety margin. |
 | `WORK_DIR` | No | `/tmp` | Working directory root. Lambda only allows writes to `/tmp`; do not change this. |
 
 ---
 
 ## SQS Message Payload Reference
 
-The Lambda expects SQS message bodies to be valid JSON strings containing the battle event. This is the shape the API server sends when `POST /api/battle` enqueues a job:
+The Lambda expects SQS message bodies to be valid JSON strings containing the battle event. This is the shape the API server sends when a battle is created:
 
 ```json
 {
-  "battle_id":     "e9d84a2b-...-uuid",
-  "simulation_id": "f1b93c4d-...-uuid",
-  "game_id":       "a0c71a1c-...-uuid",
-  "a_user_id":     "b1d82e3f-...-uuid",
-  "b_user_id":     "c2e93f4a-...-uuid",
-  "a_code_id":     "d3f04a5b-...-uuid",
-  "b_code_id":     "e4a15b6c-...-uuid"
+  "battle_id":       "e9d84a2b-...-uuid",
+  "competition_id":  "a0c71a1c-...-uuid",
+  "is_test":         false,
+  "a_user_id":       "b1d82e3f-...-uuid",
+  "b_user_id":       "c2e93f4a-...-uuid",
+  "a_snapshot_id":   "d3f04a5b-...-uuid",
+  "b_snapshot_id":   "e4a15b6c-...-uuid"
 }
 ```
 
 | Field | Source in API | Notes |
 |---|---|---|
 | `battle_id` | `app.battle.id` | Stable across re-runs; the logical match identity. |
-| `simulation_id` | Fresh `crypto.randomUUID()` in `battleAPI.js` | Unique per Lambda invocation; becomes `app.simulation_job.id`. |
-| `game_id` | `app.competition.game_id` | Used to download `s3://<bucket>/game/<game_id>/game.py`. |
+| `competition_id` | `app.competition.id` | Used to fetch competition (game_reference for S3 download). |
+| `is_test` | boolean | True = vs NPC, false = vs another user. |
 | `a_user_id` | Caller's `user_id` from session | |
-| `b_user_id` | Opponent's `user_id` from DB | |
-| `a_code_id` | Caller's `selected_code_id` from `app.enroll` | Frozen at battle creation time. |
-| `b_code_id` | Opponent's `selected_code_id` from `app.enroll` | Frozen at battle creation time. |
+| `b_user_id` | Opponent's `user_id` from DB (or NPC's) | |
+| `a_snapshot_id` | Latest `app.snapshot.id` for caller's linked code | Frozen at battle creation time. |
+| `b_snapshot_id` | Latest `app.snapshot.id` for opponent's linked code (or NPC's) | Frozen at battle creation time. |
 
 ---
 
 ## S3 Key Reference
 
 | Operation | S3 Key | Written by |
-|---|---|---|
-| Download (game definition) | `game/<game_id>/game.py` | Admin (pre-competition upload) |
-| Upload (replay video) | `output/<simulation_id>.mp4` | Lambda (after each battle) |
+|---|---|---|---|
+| Download (game definition) | `game/<game_reference>/game.py` | Admin (competition.game_reference) |
+| Upload (replay video) | `output/<battle_id>.mp4` | Lambda (after each battle) |
 
-`battle_video_reference` stored in `app.simulation_job` is the S3 key (`output/<simulation_id>.mp4`), not a full URL. The frontend constructs the URL or uses a signed download.
+`video_reference` stored in `app.battle` is the S3 key (`output/<battle_id>.mp4`), not a full URL. The frontend constructs the URL or uses a signed download.
 
 ---
 
@@ -605,19 +607,19 @@ aws lambda update-function-code \
 Check the Lambda's CloudWatch Logs for the error message. Common causes:
 
 ```
-# Symptom: "SIM_API_BASE_URL is not set"
-# Fix: Set SIM_API_BASE_URL in Lambda environment variables (Step 7)
+# Symptom: "LAMBDA_CALLBACK_BASE_URL is not set"
+# Fix: Set LAMBDA_CALLBACK_BASE_URL in Lambda environment variables (Step 7)
 
-# Symptom: "SIM_API_TOKEN is not set"
-# Fix: Set SIM_API_TOKEN in Lambda environment variables (Step 7)
+# Symptom: "LAMBDA_CALLBACK_TOKEN is not set"
+# Fix: Set LAMBDA_CALLBACK_TOKEN in Lambda environment variables (Step 7)
 
-# Symptom: "code not found: <id>"
-# Fix: The code_id in the SQS message doesn't exist in app.code.
-#      Check that the battle was created correctly and enrollments have selected_code_id.
+# Symptom: "snapshot not found: <id>"
+# Fix: The snapshot_id in the SQS message doesn't exist in app.snapshot.
+#      Check that the battle was created correctly and both players have code snapshots.
 
-# Symptom: "failed to import game: <game_id>"
-# Fix: No file at s3://python-pvp-store/game/<game_id>/game.py.
-#      Upload the game definition (Step 4).
+# Symptom: "failed to import game"
+# Fix: No file at the S3 key stored in competition.game_reference.
+#      Upload the game definition (Step 4) or check the competition's game_reference.
 ```
 
 ### Lambda times out (statusCode: 500, `execution_log: ...TimeoutError`)
@@ -673,11 +675,11 @@ aws lambda delete-function-concurrency \
   --region ap-southeast-1
 ```
 
-### API server returns 403 on internal endpoints
+### API server returns 403 on endpoints
 
-The `SIM_API_TOKEN` may be wrong or expired. Verify:
-1. The token matches the `user_session.id` for `simulator-service` in the DB.
-2. The SSM Parameter Store value (`/python_pvp/api/SIM_API_TOKEN`) is up to date.
+The `LAMBDA_CALLBACK_TOKEN` may be wrong or expired. Verify:
+1. The token matches a valid `user_session.id` for a root user in the DB.
+2. The SSM Parameter Store value (`/python_pvp/api/LAMBDA_CALLBACK_TOKEN`) is up to date.
 3. The Lambda's env var reflects the current value (update the env var after changing SSM).
 
 ### Lambda cannot reach the API server
@@ -710,7 +712,7 @@ AWS Account
 │   │   ├── python-pvp-store-rw-policy      (S3 get/put)
 │   │   └── AWSLambdaBasicExecutionRole     (CloudWatch logs)
 │   ├── Event Source Mapping: python-pvp-battle-queue → BatchSize=1
-│   └── Env: RUNNING_MODE, S3_BUCKET, SIM_API_BASE_URL, SIM_API_TOKEN, SIM_API_TIMEOUT
+│   └── Env: RUNNING_MODE, S3_BUCKET, LAMBDA_CALLBACK_BASE_URL, LAMBDA_CALLBACK_TOKEN, LAMBDA_CALLBACK_TIMEOUT
 │
 └── IAM
     ├── Role: python-pvp-simulator       (Lambda execution role)
