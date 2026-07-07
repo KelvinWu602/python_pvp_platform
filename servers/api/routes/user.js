@@ -358,7 +358,6 @@ router.post('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
             const payload = {
                 battle_id: battle.id,
                 competition_id,
-                is_test: true,
                 a_user_id: user_id,
                 b_user_id: npc_user_id,
                 a_snapshot_id,
@@ -509,7 +508,6 @@ router.post('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
             const payload = {
                 battle_id: battle.id,
                 competition_id,
-                is_test: false,
                 a_user_id: user_id,
                 b_user_id,
                 a_snapshot_id,

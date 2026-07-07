@@ -1,0 +1,1206 @@
+openapi: 3.0.3
+info:
+  title: Python PvP Platform API
+  description: |
+    PvP coding platform — users write Python strategies that compete in
+    head-to-head games. The simulator runs in an AWS Lambda, communicating
+    with the API via a root token (LAMBDA_CALLBACK_TOKEN).
+
+    ## Auth modes
+
+    | Mode | Header | Used by |
+    |------|--------|---------|
+    | Public | None | Login only |
+    | User | `Authorization: Bearer <session_id>` | User routes |
+    | Root | `Authorization: Bearer <LAMBDA_CALLBACK_TOKEN>` | Admin routes, Lambda |
+
+    Root tokens bypass all role checks and can call *any* route.
+  version: 1.0.0
+  contact:
+    name: Python PvP Platform
+
+servers:
+  - url: http://localhost:3000
+    description: Local development (via SSH tunnel to RDS)
+
+paths:
+  # ── Public ──────────────────────────────────────────────────────────────
+
+  /public/user/session:
+    post:
+      operationId: login
+      summary: Login — create a user session
+      description: Returns a Bearer token valid for 2 hours.
+      tags: [Public]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: alice
+                password:
+                  type: string
+                  example: secret123
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_token:
+                    type: string
+                    format: uuid
+                    example: "a1b2c3d4-..."
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── User (mounted at /) ─────────────────────────────────────────────────
+
+  /competition:
+    get:
+      operationId: listCompetitions
+      summary: List all competitions
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: List of competitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Competition'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /competition/{id}:
+    get:
+      operationId: getCompetition
+      summary: Get a competition by ID
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Competition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competition'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /user/session:
+    delete:
+      operationId: logout
+      summary: Logout — terminate current session
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Session terminated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Session terminated
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /code:
+    post:
+      operationId: createCode
+      summary: Create a new code with initial snapshot
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 50
+                  example: my-bot-v1
+                code:
+                  type: string
+                  description: Initial code text (optional — snapshot created only if provided)
+                  example: "def update(game_states):\n    return {'alpha1': 0.5, 'alpha2': -0.3}"
+      responses:
+        '201':
+          description: Code created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  created_at_utc:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      operationId: listMyCodes
+      summary: List my codes with latest code and tested status
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: List of codes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Code'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /code/{code_id}:
+    put:
+      operationId: updateCode
+      summary: Update code — creates a new snapshot
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: code_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  example: "def update(game_states):\n    return {'alpha1': 1.0, 'alpha2': -1.0}"
+      responses:
+        '200':
+          description: Code updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Code updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      operationId: getCode
+      summary: Get code details with latest code and tested status
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: code_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Code details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Code'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /enroll:
+    get:
+      operationId: listMyEnrollments
+      summary: List my enrollments
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: List of enrollments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Enroll'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /enroll/{enroll_id}:
+    get:
+      operationId: getEnrollment
+      summary: Get enrollment details
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Enrollment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enroll'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /enroll/{enroll_id}/code:
+    get:
+      operationId: getLinkedCode
+      summary: Get the code linked to an enrollment
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Linked code (or null if none)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Code'
+                  - nullable: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      operationId: linkCode
+      summary: Link/replace code for an enrollment
+      description: Deletes any existing link, then inserts the new one (at most one code per enrollment).
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code_id]
+              properties:
+                code_id:
+                  type: string
+                  format: uuid
+                  description: Must be owned by the current user
+      responses:
+        '200':
+          description: Code linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Code linked to enrollment
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /enroll/{enroll_id}/code/{code_id}:
+    delete:
+      operationId: unlinkCode
+      summary: Unlink code from enrollment
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: code_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Code unlinked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Code unlinked
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Tests ───────────────────────────────────────────────────────────────
+
+  /enroll/{enroll_id}/test:
+    post:
+      operationId: createTest
+      summary: Create a test battle vs the competition NPC
+      description: |
+        Uses the user's latest snapshot and the NPC's latest *tested* snapshot.
+        The Lambda processes the battle asynchronously.
+      tags: [User, Test]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: Test battle created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                    description: Battle ID
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      operationId: listTests
+      summary: List test battles for this enrollment
+      tags: [User, Test]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of test battles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Battle'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /test:
+    get:
+      operationId: listAllMyTests
+      summary: List all my test battles across all competitions
+      tags: [User, Test]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: List of test battles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Battle'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /test/{id}:
+    get:
+      operationId: getTest
+      summary: Get a specific test battle result
+      tags: [User, Test]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Battle details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Battle'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Battles ─────────────────────────────────────────────────────────────
+
+  /enroll/{enroll_id}/battle:
+    post:
+      operationId: createBattle
+      summary: Create a battle vs another enrolled user
+      description: Both players must have a tested snapshot. Processed asynchronously via SQS → Lambda.
+      tags: [User, Battle]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [b_enroll_id]
+              properties:
+                b_enroll_id:
+                  type: string
+                  format: uuid
+                  description: Opponent's enrollment ID
+      responses:
+        '201':
+          description: Battle created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      operationId: listBattlesForEnrollment
+      summary: List battles for this enrollment
+      tags: [User, Battle]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of battles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Battle'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /battle:
+    get:
+      operationId: listAllMyBattles
+      summary: List all my battles across all competitions
+      tags: [User, Battle]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: List of battles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Battle'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /battle/{id}:
+    get:
+      operationId: getBattle
+      summary: Get a specific battle result
+      tags: [User, Battle]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Battle details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Battle'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── Admin (mounted at /admin) ───────────────────────────────────────────
+
+  /admin/user:
+    post:
+      operationId: adminCreateUser
+      summary: Create a new user
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, full_name, password]
+              properties:
+                username:
+                  type: string
+                  maxLength: 20
+                  example: alice
+                full_name:
+                  type: string
+                  maxLength: 50
+                  example: Alice Wang
+                password:
+                  type: string
+                  example: secret123
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/competition:
+    post:
+      operationId: adminCreateCompetition
+      summary: Create a new competition
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - npc_user_id
+                - display_name
+                - start_time_utc
+                - end_time_utc
+                - game_reference
+                - helper_reference
+                - manifest_reference
+              properties:
+                npc_user_id:
+                  type: string
+                  format: uuid
+                  description: User who acts as the NPC opponent
+                display_name:
+                  type: string
+                  maxLength: 20
+                  example: Maze Racing 2526
+                description:
+                  type: string
+                  example: Navigate your car through the maze and reach the finish!
+                start_time_utc:
+                  type: string
+                  format: date-time
+                  description: Competition start (ISO 8601)
+                end_time_utc:
+                  type: string
+                  format: date-time
+                game_reference:
+                  type: string
+                  description: S3 key for the game .py file
+                  example: game/2526/game.py
+                helper_reference:
+                  type: string
+                  description: S3 key for the helper module
+                  example: game/2526/helper.py
+                manifest_reference:
+                  type: string
+                  description: S3 key for the competition manifest
+                  example: game/2526/manifest.json
+      responses:
+        '201':
+          description: Competition created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/enroll:
+    post:
+      operationId: adminEnrollUser
+      summary: Enroll a user in a competition
+      description: Idempotent — returns 200 if already enrolled.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [competition_id, user_id]
+              properties:
+                competition_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Enrolled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enroll'
+        '200':
+          description: Already enrolled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Already enrolled
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/enroll/{enroll_id}:
+    delete:
+      operationId: adminWithdrawEnrollment
+      summary: Withdraw a user from a competition
+      description: Removes the enrollment and any linked code_select rows.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: enroll_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Enrollment withdrawn
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Enrollment withdrawn
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/approve-code:
+    post:
+      operationId: adminApproveCode
+      summary: Mark a user's code as tested (self-play synthetic battle)
+      description: |
+        Creates a self-play battle with infra_ok=true, input_ok=true, draw=true.
+        This allows the user's code to be used in matches against other users
+        (which require tested code).
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, competition_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                competition_id:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Code approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Code approved
+                  battle_id:
+                    type: string
+                    format: uuid
+        '200':
+          description: Already tested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Already tested
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/battle-attempt/{battle_id}:
+    post:
+      operationId: adminLogAttempt
+      summary: Log a Lambda attempt (called by the simulator at start)
+      description: |
+        Creates an execution_log row with start_time_utc and lambda_request_id.
+        Only called by the Lambda with a root token.
+      tags: [Admin, Lambda]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: battle_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lambda_request_id]
+              properties:
+                lambda_request_id:
+                  type: string
+                  description: CloudWatch log stream name (Lambda context.log_stream_name)
+                  example: "2024/01/15/[$LATEST]abcdef123456"
+      responses:
+        '200':
+          description: Attempt logged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionLog'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/battle/{battle_id}:
+    put:
+      operationId: adminCallbackBattle
+      summary: Write battle result (Lambda callback / DLQ consumer)
+      description: |
+        Main Lambda calls with infra_ok=true; DLQ consumer with infra_ok=false.
+        Uses `WHERE infra_ok IS NULL` so late retries don't overwrite success.
+        Also updates win_count/lose_count/tie_count on app.enroll for completed battles.
+      tags: [Admin, Lambda]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: battle_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [infra_ok]
+              properties:
+                infra_ok:
+                  type: boolean
+                  description: Infrastructure succeeded (true) or failed (false)
+                input_ok:
+                  type: boolean
+                  nullable: true
+                  description: User code succeeded (true), failed (false), or unknown (null for DLQ)
+                draw:
+                  type: boolean
+                  nullable: true
+                winner_user_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                loser_user_id:
+                  type: string
+                  format: uuid
+                  nullable: true
+                video_reference:
+                  type: string
+                  nullable: true
+                  description: S3 object key for the replay video
+                  example: output/uuid.mp4
+      responses:
+        '200':
+          description: Battle updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Battle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/snapshot/{id}:
+    get:
+      operationId: adminGetSnapshot
+      summary: Get snapshot code (Lambda fetches code to run)
+      description: |
+        Used by the Lambda to download player code. No auth middleware —
+        relies on the root Bearer token for access control.
+      tags: [Admin, Lambda]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        For user routes: session token from POST /public/user/session.
+        For admin routes: LAMBDA_CALLBACK_TOKEN (long-lived root token).
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    Competition:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        description:
+          type: string
+        start_time_utc:
+          type: string
+          format: date-time
+        end_time_utc:
+          type: string
+          format: date-time
+        game_reference:
+          type: string
+        helper_reference:
+          type: string
+        manifest_reference:
+          type: string
+        npc_user_id:
+          type: string
+          format: uuid
+        created_at_utc:
+          type: string
+          format: date-time
+        updated_at_utc:
+          type: string
+          format: date-time
+
+    Code:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          description: Latest snapshot code text
+        created_at_utc:
+          type: string
+          format: date-time
+        tested:
+          type: boolean
+          description: Whether the latest snapshot has a completed battle
+
+    Enroll:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        competition_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        win_count:
+          type: integer
+          default: 0
+        lose_count:
+          type: integer
+          default: 0
+        tie_count:
+          type: integer
+          default: 0
+
+    Battle:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        competition_id:
+          type: string
+          format: uuid
+        is_test:
+          type: boolean
+          description: true = test vs NPC, false = PvP battle
+        a_user_id:
+          type: string
+          format: uuid
+        a_snapshot_id:
+          type: string
+          format: uuid
+        b_user_id:
+          type: string
+          format: uuid
+        b_snapshot_id:
+          type: string
+          format: uuid
+        infra_ok:
+          type: boolean
+          nullable: true
+          description: null = pending, true/false = completed
+        input_ok:
+          type: boolean
+          nullable: true
+        draw:
+          type: boolean
+          nullable: true
+        winner_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        loser_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        video_reference:
+          type: string
+          nullable: true
+        created_at_utc:
+          type: string
+          format: date-time
+        updated_at_utc:
+          type: string
+          format: date-time
+
+    Snapshot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        created_at_utc:
+          type: string
+          format: date-time
+
+    ExecutionLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        battle_id:
+          type: string
+          format: uuid
+        lambda_request_id:
+          type: string
+        start_time_utc:
+          type: string
+          format: date-time
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        full_name:
+          type: string
+        urole:
+          type: string
+          enum: [user, root]
+
+  responses:
+    BadRequest:
+      description: Bad request — missing or invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid Authorization header
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Not authorized (wrong role, not owner)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

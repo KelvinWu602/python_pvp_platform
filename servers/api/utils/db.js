@@ -11,7 +11,7 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000,
   // RDS requires SSL. Through the SSH tunnel the cert's hostname is the RDS
   // endpoint, not localhost, so disable hostname verification for local dev.
-  ssl: { rejectUnauthorized: false },
+  // ssl: { rejectUnauthorized: false },
 });
 
 pool.on('error', (err) => {

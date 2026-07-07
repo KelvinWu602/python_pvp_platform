@@ -15,7 +15,6 @@ from sandbox import PlayerWorker, UserCodeError
 #   {
 #     "battle_id":        "uuid",
 #     "competition_id":   "uuid",
-#     "is_test":          false,
 #     "a_user_id":        "uuid",
 #     "b_user_id":        "uuid",
 #     "a_snapshot_id":    "uuid",
@@ -60,78 +59,92 @@ def load_module(module_name, file_path):
 
 
 def setup_clients():
-    base = os.path.join(HERE, 'clients')
-    s3_module = load_module('s3Client', os.path.join(base, 's3Client.py'))
-    db_module = load_module('dbClient', os.path.join(base, 'dbClient.py'))
-    if s3_module is None:
-        raise RuntimeError(f'failed to load s3Client from {base}')
-    if db_module is None:
-        raise RuntimeError(f'failed to load dbClient from {base}')
-
-    return s3_module.S3Client(), db_module.DBClient()
+    from clients.s3Client import S3Client
+    from clients.dbClient import DBClient
+    s3_client = S3Client()
+    db_client = DBClient()
+    if s3_client is None:
+        raise RuntimeError(f'failed to load s3Client')
+    if db_client is None:
+        raise RuntimeError(f'failed to load dbClient')
+    return s3_client, db_client
 
 
 def extract_payload(event):
-    records = event.get('Records') if isinstance(event, dict) else None
-    if records:
-        return json.loads(records[0]['body'])
-    return event
+    """Assuming SQS message batch size = 1"""
+    records = event.get('Records') 
+    if not isinstance(records, list):
+        raise ValueError(f'expected event.records to be a list')
+    if len(records) != 1:
+        raise ValueError(f'expected len(event.records) == 1')
+    return json.loads(records[0]['body'])
 
 
 def lambda_handler(event, context):
-    payload = extract_payload(event)
-
-    battle_id = payload['battle_id']
-    competition_id = payload['competition_id']
-    a_snapshot_id = payload['a_snapshot_id']
-    b_snapshot_id = payload['b_snapshot_id']
-    a_user_id = payload['a_user_id']
-    b_user_id = payload['b_user_id']
-
-    s3_client, db_client = setup_clients()
-
-    os.environ.pop('LAMBDA_CALLBACK_TOKEN', None)
-
-    lambda_request_id = getattr(context, 'log_stream_name', 'unknown')
-
-    # ─── ATTEMPT LOG ────────────────────────────────────────────
-    db_client.log_attempt(battle_id, lambda_request_id)
-
-    # ─── DETERMINISTIC RNG for consistent retries ───────────────
-    seed = hash(battle_id)
-    random.seed(seed)
-    np.random.seed(seed % (2**32))
-
-    worker_a = None
-    worker_b = None
-
-    # ─── SETUP PHASE ────────────────────────────────────────
-    for d in (GAME_DIR, OUTPUT_DIR):
-        os.makedirs(d, exist_ok=True)
-
-    competition = db_client.fetch_competition(competition_id)
-    a_code = db_client.fetch_snapshot(a_snapshot_id)
-    b_code = db_client.fetch_snapshot(b_snapshot_id)
-
-    game_path = os.path.join(GAME_DIR, 'game.py')
-    s3_client.download(BUCKET_NAME, competition['game_reference'], game_path)
-
-    helper_path = os.path.join(HELPER_DIR, 'helper.py')
-    s3_client.download(BUCKET_NAME, competition['helper_reference'], helper_path)
-
-    game = load_module('game', game_path)
-    if game is None:
-        raise RuntimeError('failed to import game')
-    if not hasattr(game, 'init') or not hasattr(game, 'simulate') or not hasattr(game, 'export_video'):
-        raise RuntimeError('game module missing required interface')
-    
+    battle_id = None 
+    worker_a = None 
+    worker_b = None 
+    db_client = None
     try:
+        payload = extract_payload(event)
+
+        battle_id = payload['battle_id']
+        competition_id = payload['competition_id']
+        a_snapshot_id = payload['a_snapshot_id']
+        b_snapshot_id = payload['b_snapshot_id']
+        a_user_id = payload['a_user_id']
+        b_user_id = payload['b_user_id']
+
+        print(f'battle_id       :{battle_id}')
+        print(f'competition_id  :{competition_id}')
+        print(f'a_snapshot_id   :{a_snapshot_id}')
+        print(f'b_snapshot_id   :{b_snapshot_id}')
+        print(f'a_user_id       :{a_user_id}')
+        print(f'b_user_id       :{b_user_id}')
+        
+        lambda_request_id = getattr(context, 'log_stream_name', 'unknown')
+        print(f'lambda_request_id: {lambda_request_id}')
+
+        s3_client, db_client = setup_clients()
+
+        os.environ.pop('LAMBDA_CALLBACK_TOKEN', None)
+
+        # ─── ATTEMPT LOG ────────────────────────────────────────────
+        db_client.log_attempt(battle_id, lambda_request_id)
+
+        # ─── DETERMINISTIC RNG for consistent retries ───────────────
+        seed = hash(battle_id)
+        random.seed(seed)
+        np.random.seed(seed % (2**32))
+
+        worker_a = None
+        worker_b = None
+
+        # ─── SETUP PHASE ────────────────────────────────────────
+        for d in (GAME_DIR, HELPER_DIR, OUTPUT_DIR):
+            os.makedirs(d, exist_ok=True)
+
+        competition = db_client.fetch_competition(competition_id)
+        a_code = db_client.fetch_snapshot(a_snapshot_id)
+        b_code = db_client.fetch_snapshot(b_snapshot_id)
+
+        game_path = os.path.join(GAME_DIR, 'game.py')
+        s3_client.download(BUCKET_NAME, competition['game_reference'], game_path)
+
+        helper_path = os.path.join(HELPER_DIR, 'helper.py')
+        s3_client.download(BUCKET_NAME, competition['helper_reference'], helper_path)
+
+        game = load_module('game', game_path)
+        if game is None:
+            raise RuntimeError('failed to import game')
+        if not hasattr(game, 'init') or not hasattr(game, 'simulate') or not hasattr(game, 'export_video'):
+            raise RuntimeError('game module missing required interface')
+
         worker_a = PlayerWorker(a_code, helper_dir=HELPER_DIR)
         worker_b = PlayerWorker(b_code, helper_dir=HELPER_DIR)
         # ─── EXECUTION PHASE ─────────────────────────────────────
         game.init()
         result = game.simulate(worker_a, worker_b)
-        result = result or {}
 
         local_video_path = os.path.join(OUTPUT_DIR, f'{battle_id}.mp4')
         game.export_video(local_video_path)
@@ -166,9 +179,9 @@ def lambda_handler(event, context):
             winner_user_id=None, loser_user_id=None,
             draw=None, video_reference=None,
         )
-        raise
+        return {'statusCode': 200, 'battle_id': battle_id}
     except Exception as e:
-        print(f'battle {battle_id} failed: {e}')
+        print(f'battle {battle_id} infra failed, please check: {e}')
         raise
     finally:
         for w in (worker_a, worker_b):

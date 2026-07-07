@@ -8,6 +8,7 @@ class S3Client:
 
     Bucket: python-pvp-store (see simulator/design.md). Layout:
         game/<game_id>/game.py        game definitions
+        game/<game_id>/helper.py      helper definitions
         output/<simulation_id>.mp4     rendered replays (written by us)
 
     Player strategy code is NOT stored in S3. It lives in the app.code table
@@ -26,7 +27,7 @@ class S3Client:
     needed since the Lambda is not in `python-pvp-vpc`.
 
     The handler passes the bucket name explicitly on every call so the path
-    convention lives in design.md / the handler rather than being hidden here.
+    convention lives in the handler rather than being hidden here.
     """
 
     def __init__(self):

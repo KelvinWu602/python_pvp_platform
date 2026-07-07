@@ -7,7 +7,6 @@
 #   docker push <acct>.dkr.ecr.<region>.amazonaws.com/python-pvp-simulator
 #
 # Runtime env vars (see clients/):
-#   RUNNING_MODE            'production' (default) or 'test'
 #   S3_BUCKET               defaults to python-pvp-store
 #   LAMBDA_CALLBACK_BASE_URL base URL of the API server (all DB access goes through it)
 #   LAMBDA_CALLBACK_TOKEN   root Bearer token for API callback auth
@@ -33,7 +32,6 @@ COPY docker-image/handler.py ${LAMBDA_TASK_ROOT}/handler.py
 COPY docker-image/sandbox.py ${LAMBDA_TASK_ROOT}/sandbox.py
 COPY docker-image/_worker.py ${LAMBDA_TASK_ROOT}/_worker.py
 COPY docker-image/clients/ ${LAMBDA_TASK_ROOT}/clients/
-COPY docker-image/testClients/ ${LAMBDA_TASK_ROOT}/testClients/
 
 # Lambda writes only to /tmp; the handler anchors its working tree there.
 CMD ["handler.lambda_handler"]
