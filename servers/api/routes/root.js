@@ -181,7 +181,7 @@ router.post('/approve-code', async (req, res) => {
 });
 
 // POST /battle-attempt/:id - Lambda attempt log: record that Lambda started processing
-router.POST('/battle-attempt/:battle_id', async (req, res) => {
+router.post('/battle-attempt/:battle_id', async (req, res) => {
     try {
         const { battle_id } = req.params;
         const { lambda_request_id } = req.body;
