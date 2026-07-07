@@ -8,15 +8,14 @@ from the prototype in games/2526_game/game.py:
   - SAT collision detection + positional push-out
   - 8-direction raycast distance sensors
 
-Differences from the prototype:
+The only differences from the prototype are at the integration boundary so it
+matches the handler's calling pattern (simulator/docker-image/handler.py):
   - no external BaseGame import (a minimal one is inlined so the file is
     self-contained when loaded standalone from S3)
   - module-level entry points the handler calls:
         init()
         result = simulate(player_a_strategy, player_b_strategy)
         export_video(output_path)
-  - simulate() passes a single game_states dict (sandbox PlayerWorker protocol)
-    instead of separate (sensors, telemetry) args
   - simulate() returns a result dict:
         {"winner": "a" | "b" | None,
          "winner_score_gain": float,
@@ -271,11 +270,6 @@ def _collide(car_corners, car_center, theta, block):
     return (nx, ny), min_overlap
 
 
-def _ang_diff(target, current):
-    """Shortest signed angle from current to target, in [-pi, pi]."""
-    return (target - current + math.pi) % (2 * math.pi) - math.pi
-
-
 class Game(BaseGame):
     """2526 Maze Racing Game."""
 
@@ -324,22 +318,6 @@ class Game(BaseGame):
         self.winner = None
         self.frames = []
 
-    # -- helpers ------------------------------------------------------------
-    def _target_bearing(self, car):
-        """Signed angle from the car's heading to the finish zone center, in
-        [-pi, pi].  Positive = goal is clockwise of heading.  Returns 0.0 if
-        the car is exactly at the finish center."""
-        fx, fy, fw, fh = self.finish_zone
-        target_x = fx + fw / 2
-        target_y = fy + fh / 2
-        dx = target_x - car.x
-        dy = target_y - car.y
-        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
-            return 0.0
-        target_angle = math.atan2(dy, dx)
-        heading = car.theta + 3 * math.pi / 2
-        return _ang_diff(target_angle, heading)
-
     # -- simulation ---------------------------------------------------------
     def _in_finish(self, car):
         fx, fy, fw, fh = self.finish_zone
@@ -349,41 +327,26 @@ class Game(BaseGame):
         """Run the race until someone wins or time runs out, then return a
         result dict for the handler.
 
-        Both strategies are called as strategy(game_states) and must return
+        A strategy is called as strategy(sensors, telemetry) and must return
         (alpha1, alpha2) — the angular accelerations of the left and right
         wheels for this frame.
-
-        game_states dict:
-          sensors         — list of 8 distances [F, FR, R, BR, B, BL, L, FL]
-          telemetry       — dict with spin1, spin2, theta, omega, vx, vy
-          dt              — frame delta in seconds (1/60)
-          target_bearing  — signed angle from heading → finish center, [-pi, pi]
+          sensors   : list of 8 distances [F, FR, R, BR, B, BL, L, FL]
+          telemetry : dict with spin1, spin2, theta, omega, vx, vy
         """
         while self.time < self.max_time:
             for tag, car, strat in (('a', self.car_a, player_a_strategy),
                                     ('b', self.car_b, player_b_strategy)):
-                car.raycast(self.blocks)
-
-                game_states = {
-                    'sensors': list(car.sensors),
-                    'telemetry': {
-                        'spin1': car.spin1,
-                        'spin2': car.spin2,
-                        'theta': car.theta,
-                        'omega': car.omega,
-                        'vx': car.vx,
-                        'vy': car.vy,
-                    },
-                    'dt': self.dt,
-                    'target_bearing': self._target_bearing(car),
+                sensors = car.raycast(self.blocks)
+                # raycast() set car.sensors to the numeric distances.
+                telemetry = {
+                    'spin1': car.spin1, 'spin2': car.spin2,
+                    'theta': car.theta, 'omega': car.omega,
+                    'vx': car.vx, 'vy': car.vy,
                 }
-
                 try:
-                    controls = strat(game_states)
+                    alpha1, alpha2 = strat(list(car.sensors), telemetry)
                 except Exception as e:
                     raise Exception(f'Strategy {tag} error: {e}')
-
-                alpha1, alpha2 = controls
                 car.step(float(alpha1), float(alpha2), self.dt, self.blocks)
 
                 if car.finish_time is None and self._in_finish(car):
@@ -562,7 +525,7 @@ class Game(BaseGame):
 # The handler imports this module and calls init() / simulate() / export_video()
 # at module scope (not on a Game instance), so we keep a single module-level
 # Game instance and expose thin wrappers over it.
-_GAME = Game()
+_GAME = Game() 
 
 
 def init():

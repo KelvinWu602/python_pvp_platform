@@ -1,0 +1,57 @@
+{
+  "version": "2526",
+  "game": "Maze Racing",
+  "import": "helper",
+  "exports": [
+    {
+      "name": "ang_diff",
+      "signature": "ang_diff(target: float, current: float) -> float",
+      "description": "Shortest signed angle from current to target, in [-pi, pi]. Positive = target is clockwise."
+    },
+    {
+      "name": "clamp",
+      "signature": "clamp(v: float, lo: float, hi: float) -> float",
+      "description": "Clamp v to the inclusive range [lo, hi]."
+    },
+    {
+      "name": "lerp",
+      "signature": "lerp(a: float, b: float, t: float) -> float",
+      "description": "Linear interpolation: a + (b - a) * t."
+    },
+    {
+      "name": "pid",
+      "signature": "pid(error: float, kp: float, ki: float, kd: float, integral: float, prev_error: float) -> (output: float, integral: float, prev_error: float)",
+      "description": "Single PID step. Returns (output, updated_integral, current_error)."
+    }
+  ],
+  "game_states": {
+    "sensors": {
+      "type": "array[8] of float",
+      "items": ["F", "FR", "R", "BR", "B", "BL", "L", "FL"],
+      "description": "Raycast distances to nearest obstacle in 8 directions, in pixels (0-250)."
+    },
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "spin1": "float — left wheel angular velocity",
+        "spin2": "float — right wheel angular velocity",
+        "theta": "float — heading angle (radians)",
+        "omega": "float — angular velocity (rad/s)",
+        "vx": "float — velocity x (px/s)",
+        "vy": "float — velocity y (px/s)"
+      }
+    },
+    "dt": {
+      "type": "float",
+      "description": "Frame delta in seconds (1/60)."
+    },
+    "target_bearing": {
+      "type": "float",
+      "description": "Signed angle from car heading to finish zone center, in [-pi, pi]. 0 = car points at goal. Positive = goal is clockwise."
+    }
+  },
+  "update_return": {
+    "type": "tuple[2] of float",
+    "description": "(alpha1, alpha2) — angular accelerations for left and right wheels."
+  }
+}
