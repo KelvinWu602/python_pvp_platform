@@ -8,3 +8,5 @@ numpy
 # Headless build: provides cv2 without the GUI system libs (libGL/X11) that
 # full opencv-python needs, which keeps the Lambda image small.
 opencv-python-headless
+
+pyseccomp

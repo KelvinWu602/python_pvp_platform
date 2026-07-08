@@ -2,6 +2,17 @@ import sys
 import json
 
 
+def _apply_seccomp():
+    try:
+        import pyseccomp as seccomp
+        f = seccomp.SyscallFilter(seccomp.ALLOW)
+        f.add_rule(seccomp.KILL, "socket")
+        f.add_rule(seccomp.KILL, "connect")
+        f.load()
+    except Exception:
+        pass
+
+
 def main():
     # ── Startup handshake ──────────────────────────────────────────────
     #
@@ -28,6 +39,11 @@ def main():
     helper_dir = payload.get('helper_dir', '')
     if helper_dir:
         sys.path.insert(0, helper_dir)
+
+    # Seccomp is applied before user code executes, so module-level code
+    # cannot use sockets/connect. Communication with the parent uses only
+    # stdin/stdout pipes (fd 0/1), which are not affected.
+    _apply_seccomp()
 
     # exec() compiles and runs the user's Python code in a fresh dict namespace.
     # This is equivalent to executing the code at module level. After exec(),

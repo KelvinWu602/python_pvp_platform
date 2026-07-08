@@ -27,6 +27,12 @@ class PlayerWorker:
     The caller (handler.py) catches it and records input_ok=false.
     """
 
+    _STRIPPED_ENV_KEYS = frozenset({
+        'S3_BUCKET',
+        'LAMBDA_CALLBACK_BASE_URL',
+        'LAMBDA_CALLBACK_TOKEN',
+        'LAMBDA_CALLBACK_TIMEOUT',
+    })
     _WORKER_PATH = os.path.join(HERE, '_worker.py')
     _RLIMITS = {
         resource.RLIMIT_CPU: (1, 1),
@@ -68,6 +74,7 @@ class PlayerWorker:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=self._apply_sandbox,
+            env={k: v for k, v in os.environ.items() if k not in self._STRIPPED_ENV_KEYS},
         )
 
         # Send the user's code and helper path to the child via its stdin pipe.
@@ -94,20 +101,8 @@ class PlayerWorker:
                 pass
 
     @staticmethod
-    def _apply_seccomp():
-        try:
-            import seccomp
-            f = seccomp.SyscallFilter(seccomp.ALLOW)
-            f.add_rule(seccomp.KILL, "socket")
-            f.add_rule(seccomp.KILL, "connect")
-            f.load()
-        except ImportError:
-            pass
-
-    @staticmethod
     def _apply_sandbox():
         PlayerWorker._apply_rlimits()
-        PlayerWorker._apply_seccomp()
 
     def close(self):
         if self._proc:
@@ -147,7 +142,7 @@ class PlayerWorker:
         # 
         # json.dumps(..., default=str) handles non-serializable values
         # like numpy arrays by converting them to strings.
-        self._proc.stdin.write(json.dumps(data, default=str) + '\n')
+        self._proc.stdin.write((json.dumps(data, default=str) + '\n').encode('utf-8'))
         # Flush ensures the data actually leaves the parent process's
         # buffer and travels through the pipe to the child immediately.
         # Without flush(), the data could stay buffered indefinitely.

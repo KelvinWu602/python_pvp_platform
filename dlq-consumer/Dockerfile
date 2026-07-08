@@ -15,6 +15,6 @@
 FROM public.ecr.aws/lambda/python:3.12
 
 COPY docker-image/handler.py ${LAMBDA_TASK_ROOT}/handler.py
-COPY docker-image/dbClient.py ${LAMBDA_TASK_ROOT}/clients/
+COPY docker-image/dbClient.py ${LAMBDA_TASK_ROOT}/dbClient.py
 
 CMD ["handler.lambda_handler"]

@@ -9,7 +9,7 @@ class S3Client:
     Bucket: python-pvp-store (see simulator/design.md). Layout:
         game/<game_id>/game.py        game definitions
         game/<game_id>/helper.py      helper definitions
-        output/<simulation_id>.mp4     rendered replays (written by us)
+        output/<simulation_id>.webm    rendered replays (written by us)
 
     Player strategy code is NOT stored in S3. It lives in the app.code table
     in RDS and is fetched by the DB client (dbClient.getCode), so this client
@@ -47,5 +47,5 @@ class S3Client:
     def upload(self, bucket_name, object_key, file_path):
         """Upload the local file at file_path to object_key in bucket_name.
         Returns the stored object key (recorded as battle_video_reference)."""
-        self.s3.upload_file(file_path, bucket_name, object_key)
+        self.s3.upload_file(file_path, bucket_name, object_key, ExtraArgs={'ContentType': 'video/webm'})
         return object_key

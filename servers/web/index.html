@@ -1,282 +1,483 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auth Debug</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Test Console</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
+  .container { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 16px; }
+  h2 { font-size: 18px; margin-bottom: 12px; color: #555; border-bottom: 2px solid #ddd; padding-bottom: 6px; }
+
+  .topbar { background: #1b1b1b; color: #fff; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .topbar label { font-weight: 600; font-size: 14px; white-space: nowrap; }
+  .topbar input { flex: 1; min-width: 200px; padding: 7px 10px; border: 1px solid #555; border-radius: 4px; background: #2a2a2a; color: #e0e0e0; font-size: 13px; font-family: 'SF Mono', Monaco, monospace; }
+
+  .section { background: #fff; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .section-header { background: #f0f0f0; padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; font-weight: 600; font-size: 15px; border-bottom: 1px solid #ddd; }
+  .section-header:hover { background: #e8e8e8; }
+  .section-header .badge { font-size: 10px; padding: 2px 7px; border-radius: 3px; color: #fff; font-weight: 700; margin-right: 6px; }
+  .section-header .count { margin-left: auto; font-size: 12px; color: #888; font-weight: 400; }
+  .section-body { padding: 6px 0; }
+  .section.collapsed .section-body { display: none; }
+
+  .endpoint { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #f0f0f0; }
+  .endpoint:last-child { border-bottom: none; }
+  .endpoint .method { font-weight: 700; font-size: 12px; padding: 3px 8px; border-radius: 4px; color: #fff; min-width: 52px; text-align: center; flex-shrink: 0; font-family: 'SF Mono', Monaco, monospace; }
+  .method-get { background: #61affe; }
+  .method-post { background: #49cc90; }
+  .method-put { background: #fca130; }
+  .method-delete { background: #f93e3e; }
+  .endpoint .path { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; word-break: break-all; flex: 1; padding-top: 3px; }
+  .endpoint .path .param { color: #7c7c7c; font-style: italic; }
+  .endpoint .try-btn { background: #e8e8e8; border: 1px solid #ccc; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; color: #555; white-space: nowrap; }
+  .endpoint .try-btn:hover { background: #ddd; }
+
+  .endpoint-form { display: none; padding: 10px 16px 14px 16px; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
+  .endpoint-form.open { display: block; }
+  .endpoint-form .field { margin-bottom: 8px; display: flex; flex-direction: column; }
+  .endpoint-form .field label { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 3px; }
+  .endpoint-form .field label .req { color: #f93e3e; }
+  .endpoint-form .field input, .endpoint-form .field textarea { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; }
+  .endpoint-form .field textarea { min-height: 60px; resize: vertical; }
+  .endpoint-form .send-btn { color: #fff; border: none; border-radius: 4px; padding: 7px 20px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
+  .endpoint-form .send-btn:hover { opacity: 0.85; }
+  .endpoint-form .send-btn.get { background: #61affe; }
+  .endpoint-form .send-btn.post { background: #49cc90; }
+  .endpoint-form .send-btn.put { background: #fca130; }
+  .endpoint-form .send-btn.delete { background: #f93e3e; }
+
+  .auth-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; flex-wrap: wrap; }
+  .auth-row label { font-size: 13px; font-weight: 600; }
+  .auth-row input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; }
+  .auth-row .btn { padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; background: #fff; }
+  .auth-row .btn:hover { background: #f0f0f0; }
+  .auth-row .btn.primary { background: #49cc90; color: #fff; border-color: #49cc90; }
+  .auth-row .btn.primary:hover { background: #3bb87a; }
+  .auth-row .btn.danger { background: #f93e3e; color: #fff; border-color: #f93e3e; }
+  .auth-row .btn.danger:hover { background: #e03535; }
+  .auth-row .status { font-size: 12px; color: #888; }
+
+  .response-section { background: #fff; border: 1px solid #ddd; border-radius: 8px; }
+  .response-header { padding: 12px 16px; font-weight: 600; font-size: 15px; border-bottom: 1px solid #ddd; background: #f0f0f0; border-radius: 8px 8px 0 0; }
+  .response-body { padding: 12px 16px; }
+  .response-body pre { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; background: #272822; color: #f8f8f2; padding: 14px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; min-height: 60px; max-height: 500px; overflow-y: auto; }
+  .response-body .status-line { margin-bottom: 8px; font-size: 13px; }
+  .response-body .status-line .label { font-weight: 600; }
+  .response-body .status-line code { font-family: 'SF Mono', Monaco, monospace; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .response-body .status-line code.success { background: #e6f7ee; color: #1a7f3a; }
+  .response-body .status-line code.error { background: #fde8e8; color: #b91c1c; }
+  .response-body .status-line code.redirect { background: #fff3e0; color: #b76e00; }
+
+  .video-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; flex-wrap: wrap; }
+  .video-row label { font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .video-row input { flex: 1; min-width: 150px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; }
+  .video-row .btn { padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; background: #fff; }
+  .video-row .btn:hover { background: #f0f0f0; }
+  .video-row .btn.primary { background: #49cc90; color: #fff; border-color: #49cc90; }
+  .video-row .btn.primary:hover { background: #3bb87a; }
+  .video-player { padding: 10px 16px 16px; }
+  .video-player video { width: 100%; max-height: 480px; border-radius: 6px; background: #000; display: block; }
+  .video-player .url-display { font-family: 'SF Mono', Monaco, monospace; font-size: 11px; color: #888; word-break: break-all; margin-top: 6px; }
+</style>
 </head>
 <body>
-    <h1>Auth Debug</h1>
 
-    <p>API base: <input id="apiBase" value="http://localhost:3000/api" size="40"></p>
+<div class="container">
+  <div class="topbar">
+    <label for="apiBase">API Base URL</label>
+    <input id="apiBase" value="" placeholder="http://localhost:3000 (leave empty for same-origin)">
+  </div>
 
-    <hr>
-
-    <h2>1. Create user</h2>
-    <div>
-        <label>username: <input id="newUsername"></label><br>
-        <label>full name: <input id="newFullName"></label><br>
-        <label>password: <input id="newPassword" type="password"></label><br>
-        <button onclick="createUser()">Create user</button>
+  <div class="section" id="section-auth">
+    <div class="section-header" onclick="toggleSection('section-auth')">
+      <span class="badge" style="background:#6c5ce7;">AUTH</span> Authentication
+      <span class="count">2 endpoints</span>
     </div>
-
-    <hr>
-
-    <h2>2. Login (get session token)</h2>
-    <div>
-        <label>username: <input id="loginUsername"></label><br>
-        <label>password: <input id="loginPassword" type="password"></label><br>
-        <button onclick="login()">Login</button>
+    <div class="section-body">
+      <div class="auth-row">
+        <label>Username</label>
+        <input id="loginUser" placeholder="username" style="flex:0 1 160px;">
+        <label>Password</label>
+        <input id="loginPass" type="password" placeholder="password" style="flex:0 1 160px;">
+        <button class="btn primary" onclick="login()">Sign In</button>
+        <button class="btn danger" onclick="logout()">Sign Out</button>
+        <span class="status" id="authStatus"></span>
+      </div>
+      <div class="auth-row">
+        <label>Session Token</label>
+        <input id="token" placeholder="Paste token or auto-filled on login" style="flex:1;">
+        <span class="status">Sent as <code>Authorization: Bearer &lt;token&gt;</code></span>
+      </div>
     </div>
+  </div>
 
-    <hr>
-
-    <h2>3. Session token</h2>
-    <div>
-        <label>token: <input id="token" size="50"></label>
-        <button onclick="logout()">Logout (DELETE session)</button>
+  <div class="section" id="section-code">
+    <div class="section-header" onclick="toggleSection('section-code')">
+      <span class="badge" style="background:#61affe;">CODE</span> Code
+      <span class="count">4 endpoints</span>
     </div>
-    <p><small>Login auto-fills this box. You can also paste a token in manually.</small></p>
-    <p><small>All Code &amp; Competition calls below send this token as <code>Authorization: Bearer &lt;token&gt;</code>.</small></p>
+    <div class="section-body"></div>
+  </div>
 
-    <hr>
-
-    <h2>4. Code API</h2>
-    <div>
-        <h3>Upload code (POST /code)</h3>
-        <label>enroll_id: <input id="codeEnrollId" size="40"></label><br>
-        <label>name: <input id="codeName"></label><br>
-        <label>code:</label><br>
-        <textarea id="codeBody" rows="4" cols="50"></textarea><br>
-        <button onclick="createCode()">Upload code</button>
+  <div class="section" id="section-enroll">
+    <div class="section-header" onclick="toggleSection('section-enroll')">
+      <span class="badge" style="background:#fca130;">ENROLL</span> Enrollment
+      <span class="count">5 endpoints</span>
     </div>
-    <div>
-        <h3>List code by enrollment (GET /code?enroll_id=)</h3>
-        <label>enroll_id: <input id="codeListEnrollId" size="40"></label>
-        <button onclick="listCode()">List code</button>
+    <div class="section-body"></div>
+  </div>
+
+  <div class="section" id="section-comp">
+    <div class="section-header" onclick="toggleSection('section-comp')">
+      <span class="badge" style="background:#61affe;">COMP</span> Competition
+      <span class="count">2 endpoints</span>
     </div>
-    <div>
-        <h3>Get code by id (GET /code/:id)</h3>
-        <label>code_id: <input id="codeGetId" size="40"></label>
-        <button onclick="getCode()">Get code</button>
+    <div class="section-body"></div>
+  </div>
+
+  <div class="section" id="section-test">
+    <div class="section-header" onclick="toggleSection('section-test')">
+      <span class="badge" style="background:#49cc90;">TEST</span> Test Battles
+      <span class="count">4 endpoints</span>
     </div>
+    <div class="section-body"></div>
+  </div>
 
-    <hr>
-
-    <h2>5. Competition API</h2>
-    <div>
-        <h3>Create game (POST /competition/game) — admin</h3>
-        <label>display_name: <input id="gameDisplayName"></label><br>
-        <label>simulation_reference: <input id="gameSimRef" size="40"></label><br>
-        <button onclick="createGame()">Create game</button>
+  <div class="section" id="section-battle">
+    <div class="section-header" onclick="toggleSection('section-battle')">
+      <span class="badge" style="background:#49cc90;">BATTLE</span> PvP Battles
+      <span class="count">4 endpoints</span>
     </div>
-    <div>
-        <h3>Edit game (PUT /competition/game/:id) — admin</h3>
-        <label>game_id: <input id="gameEditId" size="40"></label><br>
-        <label>simulation_reference: <input id="gameEditSimRef" size="40"></label><br>
-        <button onclick="editGame()">Edit game</button>
+    <div class="section-body"></div>
+  </div>
+
+  <div class="section" id="section-admin">
+    <div class="section-header" onclick="toggleSection('section-admin')">
+      <span class="badge" style="background:#f93e3e;">ADMIN</span> Admin
+      <span class="count">8 endpoints</span>
     </div>
-    <div>
-        <h3>Get game (GET /competition/game/:id)</h3>
-        <label>game_id: <input id="gameGetId" size="40"></label>
-        <button onclick="getGame()">Get game</button>
+    <div class="section-body"></div>
+  </div>
+
+  <div class="section" id="section-video">
+    <div class="section-header" onclick="toggleSection('section-video')">
+      <span class="badge" style="background:#6c5ce7;">VIDEO</span> Video Replay
+      <span class="count">player</span>
     </div>
-    <div>
-        <h3>Create competition (POST /competition) — admin</h3>
-        <label>game_id: <input id="compGameId" size="40"></label><br>
-        <label>display_name: <input id="compDisplayName"></label><br>
-        <label>start_time_utc: <input id="compStart" placeholder="2026-01-01T00:00:00Z"></label><br>
-        <label>end_time_utc: <input id="compEnd" placeholder="2026-01-02T00:00:00Z"></label><br>
-        <label>enabled: <input id="compEnabled" type="checkbox"></label><br>
-        <button onclick="createCompetition()">Create competition</button>
+    <div class="section-body">
+      <div class="video-row">
+        <label for="vidS3Base">S3 Base URL</label>
+        <input id="vidS3Base" placeholder="https://python-pvp-store.s3.amazonaws.com" style="flex:2;">
+        <label for="vidBattleId">Battle ID</label>
+        <input id="vidBattleId" placeholder="uuid" style="flex:1;">
+        <button class="btn primary" onclick="loadVideo()">Load</button>
+      </div>
+      <div class="video-row" style="gap:6px;">
+        <span style="font-size:12px;color:#888;">Key: <code>output/{battle_id}.webm</code></span>
+        <span style="font-size:12px;color:#888;" id="vidStatus"></span>
+      </div>
+      <div class="video-player">
+        <video id="vidPlayer" controls preload="metadata">
+          <source id="vidSource" src="">
+          Your browser does not support the video tag.
+        </video>
+        <div class="url-display" id="vidUrl"></div>
+      </div>
     </div>
-    <div>
-        <h3>List competitions (GET /competition)</h3>
-        <button onclick="listCompetitions()">List competitions</button>
+  </div>
+
+  <div class="response-section">
+    <div class="response-header">Response</div>
+    <div class="response-body">
+      <div class="status-line" id="respStatus">Ready</div>
+      <pre id="respBody">(responses appear here)</pre>
     </div>
-    <div>
-        <h3>Get competition (GET /competition/:id)</h3>
-        <label>competition_id: <input id="compGetId" size="40"></label>
-        <button onclick="getCompetition()">Get competition</button>
-    </div>
-    <div>
-        <h3>Delete competition (DELETE /competition/:id) — admin</h3>
-        <label>competition_id: <input id="compDeleteId" size="40"></label>
-        <button onclick="deleteCompetition()">Delete competition</button>
-    </div>
-    <div>
-        <h3>Enroll (POST /competition/:id/enroll)</h3>
-        <label>competition_id: <input id="enrollCompId" size="40"></label><br>
-        <label>selected_code_id: <input id="enrollCodeId" size="40"></label><br>
-        <button onclick="enroll()">Enroll</button>
-    </div>
-    <div>
-        <h3>Withdraw (DELETE /competition/:id/enroll)</h3>
-        <label>competition_id: <input id="withdrawCompId" size="40"></label>
-        <button onclick="withdraw()">Withdraw</button>
-    </div>
+  </div>
+</div>
 
-    <hr>
+<script>
+// ─── Utils ──────────────────────────────────────────────────────
+function base() {
+  const v = document.getElementById('apiBase').value.replace(/\/+$/, '');
+  return v || '';
+}
+function val(id) { return document.getElementById(id).value; }
 
-    <h2>Output</h2>
-    <pre id="output" style="background:#eee">(responses appear here)</pre>
+let _lastController = null;
 
-    <script>
-        function base() {
-            return document.getElementById('apiBase').value.replace(/\/$/, '');
-        }
+function resp(status, body) {
+  const el = document.getElementById('respStatus');
+  const pre = document.getElementById('respBody');
+  if (typeof status === 'number') {
+    const cat = status < 300 ? 'success' : status < 400 ? 'redirect' : 'error';
+    el.innerHTML = `<span class="label">Status:</span> <code class="${cat}">${status}</code>`;
+  } else {
+    el.innerHTML = `<span class="label">Status:</span> <code class="error">${status}</code>`;
+  }
+  pre.textContent = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+}
 
-        function show(label, status, data) {
-            const out = document.getElementById('output');
-            out.textContent = `${label}\nHTTP ${status}\n` + JSON.stringify(data, null, 2);
-        }
+// ─── Auth ────────────────────────────────────────────────────────
+async function login() {
+  const body = { username: val('loginUser'), password: val('loginPass') };
+  try {
+    const res = await fetch(base() + '/public/user/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    resp(res.status, data);
+    if (data.auth_token) {
+      document.getElementById('token').value = data.auth_token;
+      document.getElementById('authStatus').textContent = 'Logged in';
+    }
+  } catch (e) { resp('Network error', { error: String(e) }); }
+}
 
-        async function createUser() {
-            const body = {
-                username: document.getElementById('newUsername').value,
-                full_name: document.getElementById('newFullName').value,
-                password: document.getElementById('newPassword').value,
-            };
-            try {
-                const res = await fetch(base() + '/user', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
-                const data = await res.json().catch(() => ({}));
-                show('POST /user', res.status, data);
-            } catch (e) {
-                show('POST /user (network error)', '-', { error: String(e) });
-            }
-        }
+async function logout() {
+  try {
+    const res = await fetch(base() + '/user/session', {
+      method: 'DELETE', headers: { 'Authorization': 'Bearer ' + val('token') },
+    });
+    const data = await res.json().catch(() => ({}));
+    resp(res.status, data);
+    if (res.ok) {
+      document.getElementById('token').value = '';
+      document.getElementById('authStatus').textContent = 'Logged out';
+    }
+  } catch (e) { resp('Network error', { error: String(e) }); }
+}
 
-        async function login() {
-            const body = {
-                username: document.getElementById('loginUsername').value,
-                password: document.getElementById('loginPassword').value,
-            };
-            try {
-                const res = await fetch(base() + '/user/session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
-                const data = await res.json().catch(() => ({}));
-                show('POST /user/session', res.status, data);
-                if (data.auth_token) {
-                    document.getElementById('token').value = data.auth_token;
-                }
-            } catch (e) {
-                show('POST /user/session (network error)', '-', { error: String(e) });
-            }
-        }
+// ─── Endpoint engine ─────────────────────────────────────────────
+function ep(sectionId, method, path, label, fields) {
+  const body = document.querySelector('#' + sectionId + ' .section-body');
+  const mclass = 'method-' + method.toLowerCase();
 
-        async function logout() {
-            const token = document.getElementById('token').value;
-            try {
-                const res = await fetch(base() + '/user/session', {
-                    method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + token },
-                });
-                const data = await res.json().catch(() => ({}));
-                show('DELETE /user/session', res.status, data);
-            } catch (e) {
-                show('DELETE /user/session (network error)', '-', { error: String(e) });
-            }
-        }
+  const pathParamKeys = [];
+  let m;
+  const pathRe = /:(\w+)/g;
+  while ((m = pathRe.exec(path)) !== null) pathParamKeys.push(m[1]);
 
-        // Shared helper: send a request with the session token, show the result.
-        // `path` is appended to the API base; `body` (if given) is sent as JSON.
-        async function authedFetch(method, path, body) {
-            const token = document.getElementById('token').value;
-            const label = `${method} ${path}`;
-            const opts = {
-                method,
-                headers: { 'Authorization': 'Bearer ' + token },
-            };
-            if (body !== undefined) {
-                opts.headers['Content-Type'] = 'application/json';
-                opts.body = JSON.stringify(body);
-            }
-            try {
-                const res = await fetch(base() + path, opts);
-                const data = await res.json().catch(() => ({}));
-                show(label, res.status, data);
-            } catch (e) {
-                show(label + ' (network error)', '-', { error: String(e) });
-            }
-        }
+  const row = document.createElement('div');
+  row.className = 'endpoint';
+  row.innerHTML = `
+    <span class="method ${mclass}">${method}</span>
+    <span class="path">${path.replace(/:(\w+)/g, '<span class="param">:$1</span>')}</span>
+    <span style="font-size:12px;color:#888;flex-shrink:0;padding-top:3px;">${label}</span>
+    <button class="try-btn" onclick="toggleForm(this)">Try it</button>
+  `;
+  body.appendChild(row);
 
-        function val(id) {
-            return document.getElementById(id).value;
-        }
+  const form = document.createElement('div');
+  form.className = 'endpoint-form';
+  form.innerHTML = fields.map(f => {
+    const isMulti = f.type === 'textarea';
+    const tag = isMulti ? 'textarea' : 'input';
+    const inpType = !isMulti ? (f.type || 'text') : '';
+    const attrs = ` type="${inpType}"` + (f.placeholder ? ` placeholder="${f.placeholder}"` : '');
+    const req = f.required ? ' <span class="req">*</span>' : '';
+    return `<div class="field">
+      <label for="${f.id}">${f.key}${req}</label>
+      <${tag} id="${f.id}"${attrs}></${tag}>
+    </div>`;
+  }).join('') +
+    `<button class="send-btn ${mclass}" data-method="${method}" data-path="${path}" data-pkeys="${pathParamKeys.join(',')}" onclick="send(this)">Send</button>`;
+  body.appendChild(form);
+}
 
-        // --- Code API ---
-        function createCode() {
-            authedFetch('POST', '/code', {
-                enroll_id: val('codeEnrollId'),
-                name: val('codeName'),
-                code: val('codeBody'),
-            });
-        }
+function toggleForm(btn) {
+  const form = btn.closest('.endpoint').nextElementSibling;
+  const isOpen = form.classList.toggle('open');
+  btn.textContent = isOpen ? 'Close' : 'Try it';
+}
 
-        function listCode() {
-            authedFetch('GET', '/code?enroll_id=' + encodeURIComponent(val('codeListEnrollId')));
-        }
+async function send(btn) {
+  if (_lastController) _lastController.abort();
+  const controller = new AbortController();
+  _lastController = controller;
 
-        function getCode() {
-            authedFetch('GET', '/code/' + encodeURIComponent(val('codeGetId')));
-        }
+  const method = btn.dataset.method;
+  const path = btn.dataset.path;
+  const pkeys = btn.dataset.pkeys ? btn.dataset.pkeys.split(',') : [];
 
-        // --- Competition API ---
-        function createGame() {
-            authedFetch('POST', '/competition/game', {
-                display_name: val('gameDisplayName'),
-                simulation_reference: val('gameSimRef'),
-            });
-        }
+  const inputs = btn.closest('.endpoint-form').querySelectorAll('.field input, .field textarea');
+  const bodyJson = {};
+  let resolvedPath = path;
 
-        function editGame() {
-            authedFetch('PUT', '/competition/game/' + encodeURIComponent(val('gameEditId')), {
-                simulation_reference: val('gameEditSimRef'),
-            });
-        }
+  for (const el of inputs) {
+    const key = el.id;
+    const v = el.value;
+    if (!v) continue;
+    if (pkeys.includes(key)) {
+      resolvedPath = resolvedPath.replace(':' + key, encodeURIComponent(v));
+    } else {
+      bodyJson[key] = v;
+    }
+  }
 
-        function getGame() {
-            authedFetch('GET', '/competition/game/' + encodeURIComponent(val('gameGetId')));
-        }
+  const opts = {
+    method,
+    headers: { 'Authorization': 'Bearer ' + val('token') },
+    signal: controller.signal,
+  };
 
-        function createCompetition() {
-            authedFetch('POST', '/competition', {
-                game_id: val('compGameId'),
-                display_name: val('compDisplayName'),
-                start_time_utc: val('compStart'),
-                end_time_utc: val('compEnd'),
-                enabled: document.getElementById('compEnabled').checked,
-            });
-        }
+  const hasBody = ['POST', 'PUT'].includes(method);
+  if (hasBody && Object.keys(bodyJson).length > 0) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(bodyJson);
+  }
 
-        function listCompetitions() {
-            authedFetch('GET', '/competition');
-        }
+  try {
+    const res = await fetch(base() + resolvedPath, opts);
+    const data = await res.json().catch(() => ({}));
+    resp(res.status, data);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    resp('Network error', { error: String(e) });
+  } finally {
+    if (_lastController === controller) _lastController = null;
+  }
+}
 
-        function getCompetition() {
-            authedFetch('GET', '/competition/' + encodeURIComponent(val('compGetId')));
-        }
+// ─── Video replay ───────────────────────────────────────────────
+function loadVideo() {
+  const baseUrl = document.getElementById('vidS3Base').value.replace(/\/+$/, '');
+  const battleId = document.getElementById('vidBattleId').value.trim();
+  const status = document.getElementById('vidStatus');
+  const urlEl = document.getElementById('vidUrl');
+  const video = document.getElementById('vidPlayer');
+  const source = document.getElementById('vidSource');
 
-        function deleteCompetition() {
-            authedFetch('DELETE', '/competition/' + encodeURIComponent(val('compDeleteId')));
-        }
+  if (!baseUrl || !battleId) {
+    status.textContent = 'Please fill in both fields';
+    return;
+  }
 
-        function enroll() {
-            authedFetch('POST', '/competition/' + encodeURIComponent(val('enrollCompId')) + '/enroll', {
-                selected_code_id: val('enrollCodeId'),
-            });
-        }
+  const videoUrl = baseUrl + '/output/' + encodeURIComponent(battleId) + '.webm';
+  source.src = videoUrl;
+  video.load();
+  urlEl.textContent = videoUrl;
+  status.textContent = 'Loading...';
+  video.oncanplay = () => { status.textContent = ''; };
+  video.onerror = () => { status.textContent = 'Failed to load — check S3 URL and bucket permissions'; };
+}
 
-        function withdraw() {
-            authedFetch('DELETE', '/competition/' + encodeURIComponent(val('withdrawCompId')) + '/enroll');
-        }
-    </script>
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+// ─── Bootstrap all endpoints ────────────────────────────────────
+(function() {
+  function f(opts) { return { id: opts.key, ...opts }; }
+
+  // Code
+  ep('section-code', 'POST', '/code', 'Create code', [
+    f({ key: 'name', required: true, placeholder: 'my-ai-v1' }),
+    f({ key: 'code', type: 'textarea', placeholder: 'def act(obs): ...' }),
+  ]);
+  ep('section-code', 'GET', '/code', 'List my codes', []);
+  ep('section-code', 'GET', '/code/:code_id', 'Get code', [
+    f({ key: 'code_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-code', 'PUT', '/code/:code_id', 'Update code (new snapshot)', [
+    f({ key: 'code_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'code', required: true, type: 'textarea', placeholder: 'def act(obs): ...' }),
+  ]);
+
+  // Enrollment
+  ep('section-enroll', 'GET', '/enroll', 'List my enrollments', []);
+  ep('section-enroll', 'GET', '/enroll/:enroll_id', 'Get enrollment', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-enroll', 'GET', '/enroll/:enroll_id/code', 'Get linked code', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-enroll', 'POST', '/enroll/:enroll_id/code', 'Link code to enrollment', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'code_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-enroll', 'DELETE', '/enroll/:enroll_id/code/:code_id', 'Unlink code', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'code_id', required: true, placeholder: 'uuid' }),
+  ]);
+
+  // Competition
+  ep('section-comp', 'GET', '/competition', 'List competitions', []);
+  ep('section-comp', 'GET', '/competition/:id', 'Get competition', [
+    f({ key: 'id', required: true, placeholder: 'uuid' }),
+  ]);
+
+  // Test battles
+  ep('section-test', 'POST', '/enroll/:enroll_id/test', 'Create test vs NPC', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-test', 'GET', '/enroll/:enroll_id/test', 'List test battles for enrollment', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-test', 'GET', '/test', 'List all my test battles', []);
+  ep('section-test', 'GET', '/test/:id', 'Get test battle result', [
+    f({ key: 'id', required: true, placeholder: 'uuid' }),
+  ]);
+
+  // PvP battles
+  ep('section-battle', 'POST', '/enroll/:enroll_id/battle', 'Create battle vs opponent', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'b_enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-battle', 'GET', '/enroll/:enroll_id/battle', 'List battles for enrollment', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-battle', 'GET', '/battle', 'List all my PvP battles', []);
+  ep('section-battle', 'GET', '/battle/:id', 'Get battle result', [
+    f({ key: 'id', required: true, placeholder: 'uuid' }),
+  ]);
+
+  // Admin
+  ep('section-admin', 'POST', '/admin/user', 'Create user', [
+    f({ key: 'username', required: true, placeholder: 'newuser' }),
+    f({ key: 'full_name', required: true, placeholder: 'New User' }),
+    f({ key: 'password', required: true, type: 'password', placeholder: 'secret' }),
+  ]);
+  ep('section-admin', 'POST', '/admin/competition', 'Create competition', [
+    f({ key: 'npc_user_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'display_name', required: true, placeholder: 'Season 1' }),
+    f({ key: 'description', placeholder: 'Optional' }),
+    f({ key: 'start_time_utc', required: true, placeholder: '2026-07-01T00:00:00Z' }),
+    f({ key: 'end_time_utc', required: true, placeholder: '2026-07-31T00:00:00Z' }),
+    f({ key: 'game_reference', required: true, placeholder: 'games/my_game/game.py' }),
+    f({ key: 'helper_reference', required: true, placeholder: 'games/my_game/helper.py' }),
+    f({ key: 'manifest_reference', required: true, placeholder: 'games/my_game/manifest.json' }),
+  ]);
+  ep('section-admin', 'POST', '/admin/enroll', 'Enroll user', [
+    f({ key: 'competition_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'user_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-admin', 'DELETE', '/admin/enroll/:enroll_id', 'Withdraw enrollment', [
+    f({ key: 'enroll_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-admin', 'POST', '/admin/approve-code', 'Approve code (mark tested)', [
+    f({ key: 'user_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'competition_id', required: true, placeholder: 'uuid' }),
+  ]);
+  ep('section-admin', 'POST', '/admin/battle-attempt/:battle_id', 'Log Lambda attempt', [
+    f({ key: 'battle_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'lambda_request_id', required: true, placeholder: 'log-stream-name' }),
+  ]);
+  ep('section-admin', 'PUT', '/admin/battle/:battle_id', 'Write battle result (Lambda cb)', [
+    f({ key: 'battle_id', required: true, placeholder: 'uuid' }),
+    f({ key: 'infra_ok', required: true, placeholder: 'true' }),
+    f({ key: 'input_ok', placeholder: 'true' }),
+    f({ key: 'draw', placeholder: 'false' }),
+    f({ key: 'winner_user_id', placeholder: 'uuid' }),
+    f({ key: 'loser_user_id', placeholder: 'uuid' }),
+    f({ key: 'video_reference', placeholder: 'replays/battle_id.mp4' }),
+  ]);
+  ep('section-admin', 'GET', '/admin/snapshot/:id', 'Get snapshot code', [
+    f({ key: 'id', required: true, placeholder: 'uuid' }),
+  ]);
+})();
+</script>
 </body>
 </html>

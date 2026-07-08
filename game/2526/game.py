@@ -288,7 +288,8 @@ class Game(BaseGame):
         super().__init__()
         self.dt = 1 / 60
         self.max_time = 30.0
-        self.fps = 60
+        self.fps = 60           # physics fps
+        self.render_fps = 30    # video render fps (decoupled from physics)
 
         self.blocks = []
         self.finish_zone = None  # (x, y, w, h)
@@ -457,8 +458,8 @@ class Game(BaseGame):
         })
 
     # -- rendering ----------------------------------------------------------
-    def export(self, output_path='/tmp/game.mp4'):
-        """Render recorded frames to a 1080x720 mp4 and return the path."""
+    def export(self, output_path='/tmp/game.webm'):
+        """Render recorded frames to a 1080x720 webm (VP8) at render_fps and return the path."""
         if not self.frames:
             raise Exception('No frames to export; run simulate() first')
 
@@ -471,8 +472,8 @@ class Game(BaseGame):
         def to_px(x, y):
             return (int(x * scale + off_x), int(y * scale + off_y))
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video = cv2.VideoWriter(output_path, fourcc, self.fps, (out_w, out_h))
+        fourcc = cv2.VideoWriter_fourcc(*'VP80')
+        video = cv2.VideoWriter(output_path, fourcc, self.render_fps, (out_w, out_h))
         if not video.isOpened():
             raise Exception(f'Failed to open video writer for {output_path}')
 
@@ -486,8 +487,9 @@ class Game(BaseGame):
         COL_B = (0, 80, 255)      # red-ish
         COL_WHEEL = (40, 40, 40)
 
+        step = max(1, round(self.fps / self.render_fps))   # 60/30 = 2 -> every 2nd frame
         try:
-            for fr in self.frames:
+            for fr in self.frames[::step]:
                 img = np.zeros((out_h, out_w, 3), dtype=np.uint8)
                 img[:] = COL_BG
 

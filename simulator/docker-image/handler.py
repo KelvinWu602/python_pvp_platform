@@ -38,7 +38,7 @@ from sandbox import PlayerWorker, UserCodeError
 
 BUCKET_NAME = os.environ.get('S3_BUCKET', 'python-pvp-store')
 
-VIDEO_OBJECT_KEY_FMT = 'output/{battle_id}.mp4'
+VIDEO_OBJECT_KEY_FMT = 'output/{battle_id}.webm'
 
 WORK_DIR = os.environ.get('WORK_DIR', '/tmp')
 GAME_DIR = os.path.join(WORK_DIR, 'game')
@@ -107,8 +107,6 @@ def lambda_handler(event, context):
 
         s3_client, db_client = setup_clients()
 
-        os.environ.pop('LAMBDA_CALLBACK_TOKEN', None)
-
         # ─── ATTEMPT LOG ────────────────────────────────────────────
         db_client.log_attempt(battle_id, lambda_request_id)
 
@@ -146,7 +144,9 @@ def lambda_handler(event, context):
         game.init()
         result = game.simulate(worker_a, worker_b)
 
-        local_video_path = os.path.join(OUTPUT_DIR, f'{battle_id}.mp4')
+        # The game engine writes VP9/WebM directly (cv2.VideoWriter 'VP90'),
+        # which browsers play natively — no transcode step needed.
+        local_video_path = os.path.join(OUTPUT_DIR, f'{battle_id}.webm')
         game.export_video(local_video_path)
 
         video_key = VIDEO_OBJECT_KEY_FMT.format(battle_id=battle_id)
