@@ -41,10 +41,13 @@ def main():
     if helper_dir:
         sys.path.insert(0, helper_dir)
 
-    # Open dedicated IPC channel on fd 4 (passed by parent via pass_fds).
+    # Open dedicated IPC channel on the fd passed by the parent via pass_fds.
+    # The parent sends the actual fd number in the startup payload so the
+    # child always opens the right one (fd number is not guaranteed to be 4).
     # All IPC JSON messages go here, keeping sys.stdout (fd 1) free for the
     # user's print() output and sys.stderr (fd 2) for Python tracebacks.
-    ipc_out = os.fdopen(4, 'w')
+    ipc_fd = payload.get('ipc_fd', 4)
+    ipc_out = os.fdopen(ipc_fd, 'w')
 
     # Seccomp is applied before user code executes, so module-level code
     # cannot use sockets/connect. Communication with the parent uses only

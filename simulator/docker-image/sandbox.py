@@ -104,17 +104,19 @@ class PlayerWorker:
         t_out.start()
         t_err.start()
 
-        # Send the user's code and helper path to the child via its stdin pipe.
-        # The child reads this with sys.stdin.readline() in _worker.py.
-        startup = {'user_code': self._user_code}
+        # Send the user's code, helper path, and IPC fd number to the child
+        # via its stdin pipe. The child reads this with sys.stdin.readline()
+        # in _worker.py and uses ipc_fd to open the dedicated IPC channel.
+        startup = {'user_code': self._user_code, 'ipc_fd': ipc_w}
         if self._helper_dir:
             startup['helper_dir'] = self._helper_dir
         self._write(startup)
 
         # Wait for the child to confirm it successfully loaded the user's code.
-        # The child writes {"ok": true} to its IPC channel (fd 4) after exec() succeeds.
-        # If the user's code has a syntax error or doesn't define update(),
-        # the child writes {"ok": false, "error": "..."} instead.
+        # The child writes {"ok": true} to its IPC channel (the fd sent as
+        # ipc_fd in the startup message) after exec() succeeds. If the user's
+        # code has a syntax error or doesn't define update(), the child writes
+        # {"ok": false, "error": "..."} instead.
         resp = self._read_ipc(timeout=5.0)
         if not resp.get('ok'):
             raise UserCodeError(f'worker startup failed: {resp.get("error", "unknown")}')
