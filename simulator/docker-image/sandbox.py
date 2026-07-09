@@ -50,6 +50,7 @@ class PlayerWorker:
         self._ipc_file = None
         self._stdout_log = []
         self._stderr_log = []
+        self._last_error = None
         self._spawn()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -237,9 +238,15 @@ class PlayerWorker:
             resp = self._read_ipc(timeout=1.0)
             if resp.get('ok'):
                 return resp['controls']
-            raise UserCodeError(resp.get('error', 'unknown'))
+            err = resp.get('error', 'unknown')
+            self._last_error = err
+            raise UserCodeError(err)
         except Exception as e:
+            self._last_error = str(e)
             raise UserCodeError(str(e))
+
+    def get_last_error(self):
+        return self._last_error
 
     def __del__(self):
         self.close()

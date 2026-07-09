@@ -142,7 +142,16 @@ def lambda_handler(event, context):
         worker_b = PlayerWorker(b_code, helper_dir=HELPER_DIR)
         # ─── EXECUTION PHASE ─────────────────────────────────────
         game.init()
-        result = game.simulate(worker_a, worker_b)
+        try:
+            result = game.simulate(worker_a, worker_b)
+        except Exception:
+            # game engines tend to catch all exceptions and re-wrap them,
+            # which destroys the UserCodeError type. Check the workers
+            # directly — if either recorded a strategy error, classify
+            # this as a user code failure (input_ok=false).
+            if (worker_a and worker_a.get_last_error()) or (worker_b and worker_b.get_last_error()):
+                raise UserCodeError(worker_a.get_last_error() or worker_b.get_last_error())
+            raise
 
         # Capture player output from the subprocess pipes before closing.
         a_stdout_log = worker_a.get_stdout_log()
