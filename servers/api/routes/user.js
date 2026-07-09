@@ -391,9 +391,7 @@ router.get('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
         const { competition_id } = enrollResult.rows[0];
 
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle
              WHERE competition_id = $1 AND is_test = true AND a_user_id = $2
              ORDER BY created_at_utc DESC;`,
@@ -410,9 +408,7 @@ router.get('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
 router.get('/test', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle
              WHERE is_test = true AND a_user_id = $1
              ORDER BY created_at_utc DESC;`,
@@ -541,9 +537,7 @@ router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
         const { competition_id } = enrollResult.rows[0];
 
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle
              WHERE competition_id = $1 AND is_test = false
                AND (a_user_id = $2 OR b_user_id = $2)
@@ -561,9 +555,7 @@ router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
 router.get('/battle', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle
              WHERE is_test = false
                AND (a_user_id = $1 OR b_user_id = $1)
@@ -584,9 +576,7 @@ router.get('/test/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle WHERE id = $1 AND is_test = true AND a_user_id = $2;`,
             [id, req.user.user_id]
         );
@@ -605,9 +595,7 @@ router.get('/battle/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const result = await pool.query(
-            `SELECT id, competition_id, is_test, a_user_id, b_user_id,
-                    infra_ok, input_ok, draw, winner_user_id, loser_user_id,
-                    video_reference, created_at_utc, updated_at_utc
+            `SELECT *
              FROM app.battle WHERE id = $1 AND (a_user_id = $2 OR b_user_id = $2);`,
             [id, req.user.user_id]
         );

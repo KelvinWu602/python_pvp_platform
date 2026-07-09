@@ -1,5 +1,6 @@
 import sys
 import json
+import os
 
 
 def _apply_seccomp():
@@ -40,6 +41,11 @@ def main():
     if helper_dir:
         sys.path.insert(0, helper_dir)
 
+    # Open dedicated IPC channel on fd 4 (passed by parent via pass_fds).
+    # All IPC JSON messages go here, keeping sys.stdout (fd 1) free for the
+    # user's print() output and sys.stderr (fd 2) for Python tracebacks.
+    ipc_out = os.fdopen(4, 'w')
+
     # Seccomp is applied before user code executes, so module-level code
     # cannot use sockets/connect. Communication with the parent uses only
     # stdin/stdout pipes (fd 0/1), which are not affected.
@@ -60,14 +66,14 @@ def main():
     # If the user forgot to define update(), tell the parent immediately
     # and exit. The parent will raise UserCodeError.
     if not update_func:
-        sys.stdout.write(json.dumps({'ok': False, 'error': 'update() function not found'}) + '\n')
-        sys.stdout.flush()
+        ipc_out.write(json.dumps({'ok': False, 'error': 'update() function not found'}) + '\n')
+        ipc_out.flush()
         return
 
     # Acknowledge success. The parent's _spawn() waits for this before
     # returning the worker to the game loop.
-    sys.stdout.write(json.dumps({'ok': True}) + '\n')
-    sys.stdout.flush()
+    ipc_out.write(json.dumps({'ok': True}) + '\n')
+    ipc_out.flush()
 
     # ── Per-frame game loop ────────────────────────────────────────────
     #
@@ -93,16 +99,16 @@ def main():
         try:
             frame = json.loads(line)
             result = update_func(frame['game_states'])
-            sys.stdout.write(json.dumps({
+            ipc_out.write(json.dumps({
                 'ok': True,
                 'controls': result,
             }) + '\n')
         except Exception as e:
-            sys.stdout.write(json.dumps({'ok': False, 'error': str(e)}) + '\n')
+            ipc_out.write(json.dumps({'ok': False, 'error': str(e)}) + '\n')
         # Flush every frame so the parent receives the response immediately.
         # Without flush(), output buffers and the parent's select() would
         # timeout waiting for data that's stuck in our buffer.
-        sys.stdout.flush()
+        ipc_out.flush()
 
 
 if __name__ == '__main__':

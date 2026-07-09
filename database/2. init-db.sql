@@ -82,6 +82,10 @@ CREATE TABLE app.battle (
     winner_user_id uuid REFERENCES app.user(id),
     loser_user_id uuid REFERENCES app.user(id),
     video_reference text,
+    a_stdout_log text,
+    a_stderr_log text,
+    b_stdout_log text,
+    b_stderr_log text,
     created_at_utc timestamp NOT NULL DEFAULT now(),
     updated_at_utc timestamp NOT NULL DEFAULT now()
 );

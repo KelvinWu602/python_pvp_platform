@@ -84,7 +84,9 @@ class DBClient:
     # -- battle callback (PUT) ---------------------------------------------
     def callback_battle(self, battle_id, *, infra_ok, input_ok,
                         winner_user_id=None, loser_user_id=None,
-                        draw=None, video_reference=None):
+                        draw=None, video_reference=None,
+                        a_stdout_log=None, a_stderr_log=None,
+                        b_stdout_log=None, b_stderr_log=None):
         """Write battle result via the API.
 
         PUT /admin/battle/:id → sets infra_ok/input_ok + updates battle row.
@@ -97,7 +99,11 @@ class DBClient:
             'draw': draw,
             'winner_user_id': winner_user_id,
             'loser_user_id': loser_user_id,
-            'video_reference': video_reference
+            'video_reference': video_reference,
+            'a_stdout_log': a_stdout_log,
+            'a_stderr_log': a_stderr_log,
+            'b_stdout_log': b_stdout_log,
+            'b_stderr_log': b_stderr_log,
         }
         self._request('PUT', f'/admin/battle/{battle_id}', body)
 

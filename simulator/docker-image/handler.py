@@ -144,6 +144,12 @@ def lambda_handler(event, context):
         game.init()
         result = game.simulate(worker_a, worker_b)
 
+        # Capture player output from the subprocess pipes before closing.
+        a_stdout_log = worker_a.get_stdout_log()
+        a_stderr_log = worker_a.get_stderr_log()
+        b_stdout_log = worker_b.get_stdout_log()
+        b_stderr_log = worker_b.get_stderr_log()
+
         # The game engine writes VP9/WebM directly (cv2.VideoWriter 'VP90'),
         # which browsers play natively — no transcode step needed.
         local_video_path = os.path.join(OUTPUT_DIR, f'{battle_id}.webm')
@@ -166,18 +172,30 @@ def lambda_handler(event, context):
             winner_user_id=winner_user_id,
             loser_user_id=loser_user_id,
             draw=(winner_user_id is None),
-            video_reference=video_key
+            video_reference=video_key,
+            a_stdout_log=a_stdout_log,
+            a_stderr_log=a_stderr_log,
+            b_stdout_log=b_stdout_log,
+            b_stderr_log=b_stderr_log,
         )
 
         print(f'battle {battle_id} completed')
         return {'statusCode': 200, 'battle_id': battle_id}
 
     except UserCodeError:
+        a_stdout_log = worker_a.get_stdout_log() if worker_a else None
+        a_stderr_log = worker_a.get_stderr_log() if worker_a else None
+        b_stdout_log = worker_b.get_stdout_log() if worker_b else None
+        b_stderr_log = worker_b.get_stderr_log() if worker_b else None
         db_client.callback_battle(
             battle_id=battle_id,
             infra_ok=True, input_ok=False,
             winner_user_id=None, loser_user_id=None,
             draw=None, video_reference=None,
+            a_stdout_log=a_stdout_log,
+            a_stderr_log=a_stderr_log,
+            b_stdout_log=b_stdout_log,
+            b_stderr_log=b_stderr_log,
         )
         return {'statusCode': 200, 'battle_id': battle_id}
     except Exception as e:

@@ -3,6 +3,7 @@ import json
 import subprocess
 import resource
 import select
+import threading
 
 
 class UserCodeError(Exception):
@@ -27,6 +28,7 @@ class PlayerWorker:
     The caller (handler.py) catches it and records input_ok=false.
     """
 
+    _IPC_WRITE_FD = 4
     _STRIPPED_ENV_KEYS = frozenset({
         'S3_BUCKET',
         'LAMBDA_CALLBACK_BASE_URL',
@@ -45,25 +47,35 @@ class PlayerWorker:
         self._user_code = user_code
         self._helper_dir = helper_dir
         self._proc = None
+        self._ipc_file = None
+        self._stdout_log = []
+        self._stderr_log = []
         self._spawn()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
     def _spawn(self):
+        # Create a dedicated IPC pipe for JSON messages, separate from stdout
+        # (used by the user's print()) and stderr (used by Python tracebacks).
+        ipc_r, ipc_w = os.pipe()
+
         # subprocess.Popen starts a new OS-level process running `python3 _worker.py`.
         # It does NOT wait for the child to finish — both processes run concurrently.
         #
-        # stdin=PIPE, stdout=PIPE, stderr=PIPE:
+        # stdin=PIPE, stdout=PIPE, stderr=PIPE, pass_fds=(ipc_w,):
         #   Instead of the child reading from the keyboard (stdin) or writing to
         #   the terminal (stdout), we create "pipe" objects — think of them as
         #   one-way communication tubes:
         #
-        #     self._proc.stdin  (a pipe writable by PARENT, readable by CHILD)
-        #     self._proc.stdout (a pipe writable by CHILD, readable by PARENT)
-        #     self._proc.stderr (a pipe writable by CHILD, readable by PARENT)
+        #     self._proc.stdin  (a pipe writable by PARENT, readable by CHILD)  [fd 0]
+        #     self._proc.stdout (a pipe writable by CHILD, readable by PARENT)  [fd 1]
+        #     self._proc.stderr (a pipe writable by CHILD, readable by PARENT)  [fd 2]
+        #     ipc_w             (a pipe writable by CHILD, readable by PARENT)  [fd 4]
         #
-        #   Parent writes to  self._proc.stdin   ──► Child reads from sys.stdin
-        #   Child  writes to  sys.stdout         ──► Parent reads from self._proc.stdout
+        #   Parent writes to   self._proc.stdin   ──► Child reads from sys.stdin
+        #   Child  writes to   sys.stdout         ──► Parent reads from self._proc.stdout (user print())
+        #   Child  writes to   sys.stderr         ──► Parent reads from self._proc.stderr (errors)
+        #   Child  writes to   fd 4 (ipc_out)     ──► Parent reads from ipc_r (JSON messages)
         #
         # preexec_fn is a function that runs in the CHILD process just after fork()
         # but before exec(). We use it to set resource limits (rlimits) that the
@@ -73,9 +85,23 @@ class PlayerWorker:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            pass_fds=(ipc_w,),
             preexec_fn=self._apply_sandbox,
             env={k: v for k, v in os.environ.items() if k not in self._STRIPPED_ENV_KEYS},
         )
+
+        # Parent closes the write-end of the IPC pipe — the child has it via pass_fds.
+        # The parent reads from the read-end via self._ipc_file.
+        os.close(ipc_w)
+        self._ipc_file = os.fdopen(ipc_r, 'r')
+
+        # Start daemon threads that continuously drain stdout/stderr into lists.
+        # This prevents pipe buffer deadlocks (if nobody reads, the child blocks
+        # when its pipe buffer fills up) and captures user output for logging.
+        t_out = threading.Thread(target=self._drain, args=(self._proc.stdout, self._stdout_log), daemon=True)
+        t_err = threading.Thread(target=self._drain, args=(self._proc.stderr, self._stderr_log), daemon=True)
+        t_out.start()
+        t_err.start()
 
         # Send the user's code and helper path to the child via its stdin pipe.
         # The child reads this with sys.stdin.readline() in _worker.py.
@@ -85,10 +111,10 @@ class PlayerWorker:
         self._write(startup)
 
         # Wait for the child to confirm it successfully loaded the user's code.
-        # The child writes {"ok": true} to its stdout after exec() succeeds.
+        # The child writes {"ok": true} to its IPC channel (fd 4) after exec() succeeds.
         # If the user's code has a syntax error or doesn't define update(),
         # the child writes {"ok": false, "error": "..."} instead.
-        resp = self._read(timeout=5.0)
+        resp = self._read_ipc(timeout=5.0)
         if not resp.get('ok'):
             raise UserCodeError(f'worker startup failed: {resp.get("error", "unknown")}')
 
@@ -104,7 +130,28 @@ class PlayerWorker:
     def _apply_sandbox():
         PlayerWorker._apply_rlimits()
 
+    @staticmethod
+    def _drain(stream, dest):
+        """Read all lines from a pipe into a list (runs in a daemon thread).
+
+        The daemon thread pattern is safe: even if the parent exits before the
+        thread finishes draining, the OS closes the pipe and readline() returns
+        '', ending the loop.
+        """
+        for line in iter(stream.readline, ''):
+            dest.append(line)   # line includes \n at the end
+        stream.close()
+
+    def get_stdout_log(self):
+        return ''.join(self._stdout_log)
+
+    def get_stderr_log(self):
+        return ''.join(self._stderr_log)
+
     def close(self):
+        if self._ipc_file:
+            self._ipc_file.close()
+            self._ipc_file = None
         if self._proc:
             # Send SIGKILL to the child process. The kernel terminates it
             # immediately — no cleanup, no signal handler.
@@ -148,17 +195,17 @@ class PlayerWorker:
         # Without flush(), the data could stay buffered indefinitely.
         self._proc.stdin.flush()
 
-    def _read(self, timeout=1.0):
-        # select.select() checks if the child's stdout pipe has data
-        # available to read, without blocking forever if it doesn't.
+    def _read_ipc(self, timeout=1.0):
+        # select.select() checks if the IPC pipe has data available to read,
+        # without blocking forever if it doesn't.
         #
-        #   r = [self._proc.stdout]  → data is ready to read
-        #   r = []                   → timeout expired, no data
+        #   r = [self._ipc_file]  → data is ready to read
+        #   r = []                → timeout expired, no data
         #
         # This is the per-frame timeout mechanism. If the child is stuck
-        # in an infinite loop, its stdout pipe stays empty, select()
+        # in an infinite loop, its IPC pipe stays empty, select()
         # returns after 1s, and we raise TimeoutError.
-        r, _, _ = select.select([self._proc.stdout], [], [], timeout)
+        r, _, _ = select.select([self._ipc_file], [], [], timeout)
         if not r:
             raise TimeoutError('worker did not respond in time')
 
@@ -166,9 +213,9 @@ class PlayerWorker:
         # Since select() already confirmed data exists, this usually
         # returns immediately. But if the child crashed after select()
         # returned (race condition), readline() returns empty string.
-        line = self._proc.stdout.readline()
+        line = self._ipc_file.readline()
         if not line:
-            # Empty line means EOF — the child's stdout pipe was closed,
+            # Empty line means EOF — the child's IPC pipe was closed,
             # which happens when the child process terminates.
             raise BrokenPipeError('worker process died')
 
@@ -187,7 +234,7 @@ class PlayerWorker:
     def __call__(self, game_states):
         try:
             self._write({'game_states': game_states})
-            resp = self._read(timeout=1.0)
+            resp = self._read_ipc(timeout=1.0)
             if resp.get('ok'):
                 return resp['controls']
             raise UserCodeError(resp.get('error', 'unknown'))

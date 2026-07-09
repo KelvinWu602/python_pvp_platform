@@ -210,7 +210,9 @@ router.put('/battle/:battle_id', async (req, res) => {
             infra_ok, input_ok, draw,
             winner_user_id, loser_user_id,
             a_user_id, b_user_id,
-            video_reference
+            video_reference,
+            a_stdout_log, a_stderr_log,
+            b_stdout_log, b_stderr_log
         } = req.body;
 
         if (infra_ok === undefined) {
@@ -227,10 +229,14 @@ router.put('/battle/:battle_id', async (req, res) => {
                  winner_user_id = $4,
                  loser_user_id = $5,
                  video_reference = $6,
-                 updated_at_utc = now()
-              WHERE id = $7 AND infra_ok IS NULL
+                 updated_at_utc = now(),
+                 a_stdout_log = $7,
+                 a_stderr_log = $8,
+                 b_stdout_log = $9,
+                 b_stderr_log = $10
+              WHERE id = $11 AND infra_ok IS NULL
               RETURNING *;`,
-            [infra_ok, input_ok ?? null, draw ?? null, winner_user_id ?? null, loser_user_id ?? null, video_reference ?? null, battle_id]
+            [infra_ok, input_ok ?? null, draw ?? null, winner_user_id ?? null, loser_user_id ?? null, video_reference ?? null, a_stdout_log ?? null, a_stderr_log ?? null, b_stdout_log ?? null, b_stderr_log ?? null, battle_id]
         );
 
         // Just a safe guard, normally this cannot happen.
