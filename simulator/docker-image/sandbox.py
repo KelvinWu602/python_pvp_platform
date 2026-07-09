@@ -3,7 +3,6 @@ import json
 import subprocess
 import resource
 import select
-import threading
 
 
 class UserCodeError(Exception):
@@ -48,8 +47,6 @@ class PlayerWorker:
         self._helper_dir = helper_dir
         self._proc = None
         self._ipc_file = None
-        self._stdout_log = []
-        self._stderr_log = []
         self._last_error = None
         self._spawn()
 
@@ -96,14 +93,6 @@ class PlayerWorker:
         os.close(ipc_w)
         self._ipc_file = os.fdopen(ipc_r, 'r')
 
-        # Start daemon threads that continuously drain stdout/stderr into lists.
-        # This prevents pipe buffer deadlocks (if nobody reads, the child blocks
-        # when its pipe buffer fills up) and captures user output for logging.
-        t_out = threading.Thread(target=self._drain, args=(self._proc.stdout, self._stdout_log), daemon=True)
-        t_err = threading.Thread(target=self._drain, args=(self._proc.stderr, self._stderr_log), daemon=True)
-        t_out.start()
-        t_err.start()
-
         # Send the user's code, helper path, and IPC fd number to the child
         # via its stdin pipe. The child reads this with sys.stdin.readline()
         # in _worker.py and uses ipc_fd to open the dedicated IPC channel.
@@ -133,23 +122,23 @@ class PlayerWorker:
     def _apply_sandbox():
         PlayerWorker._apply_rlimits()
 
-    @staticmethod
-    def _drain(stream, dest):
-        """Read all lines from a pipe into a list (runs in a daemon thread).
+    def drain_logs(self):
+        """Close stdin to signal the child to exit, then read all remaining
+        stdout/stderr. This is called once after the game loop finishes —
+        no more frames are sent.
 
-        The daemon thread pattern is safe: even if the parent exits before the
-        thread finishes draining, the OS closes the pipe and readline() returns
-        '', ending the loop.
+        Returns {'stdout': str, 'stderr': str} with all user code print()
+        output and error output captured.
         """
-        for line in iter(stream.readline, ''):
-            dest.append(line)   # line includes \n at the end
-        stream.close()
-
-    def get_stdout_log(self):
-        return ''.join(self._stdout_log)
-
-    def get_stderr_log(self):
-        return ''.join(self._stderr_log)
+        stdout, stderr = self._proc.communicate(timeout=5)
+        self._proc = None
+        if self._ipc_file:
+            self._ipc_file.close()
+            self._ipc_file = None
+        return {
+            'stdout': stdout.decode('utf-8', errors='replace') if stdout else '',
+            'stderr': stderr.decode('utf-8', errors='replace') if stderr else '',
+        }
 
     def close(self):
         if self._ipc_file:

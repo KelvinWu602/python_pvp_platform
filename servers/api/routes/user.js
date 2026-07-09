@@ -383,6 +383,8 @@ router.post('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
 // GET /enroll/:eid/test - List tests for this enrollment
 router.get('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const enroll_id = req.params.enroll_id;
         const enrollResult = await pool.query(
             `SELECT competition_id FROM app.enroll WHERE id = $1;`,
@@ -391,7 +393,13 @@ router.get('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
         const { competition_id } = enrollResult.rows[0];
 
         const result = await pool.query(
-            `SELECT *
+            `SELECT 
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle
              WHERE competition_id = $1 AND is_test = true AND a_user_id = $2
              ORDER BY created_at_utc DESC;`,
@@ -407,8 +415,16 @@ router.get('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
 // GET /test - List all my tests across all competitions
 router.get('/test', async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const result = await pool.query(
-            `SELECT *
+            `SELECT
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle
              WHERE is_test = true AND a_user_id = $1
              ORDER BY created_at_utc DESC;`,
@@ -529,15 +545,22 @@ router.post('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
 // GET /enroll/:eid/battle - List battles for this enrollment
 router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const enroll_id = req.params.enroll_id;
         const enrollResult = await pool.query(
             `SELECT competition_id FROM app.enroll WHERE id = $1;`,
             [enroll_id]
         );
         const { competition_id } = enrollResult.rows[0];
-
         const result = await pool.query(
-            `SELECT *
+            `SELECT
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle
              WHERE competition_id = $1 AND is_test = false
                AND (a_user_id = $2 OR b_user_id = $2)
@@ -554,8 +577,16 @@ router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
 // GET /battle - List all my battles across all competitions
 router.get('/battle', async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const result = await pool.query(
-            `SELECT *
+            `SELECT
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle
              WHERE is_test = false
                AND (a_user_id = $1 OR b_user_id = $1)
@@ -574,9 +605,17 @@ router.get('/battle', async (req, res) => {
 // GET /test/:id - Get test result
 router.get('/test/:id', async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const { id } = req.params;
         const result = await pool.query(
-            `SELECT *
+            `SELECT
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle WHERE id = $1 AND is_test = true AND a_user_id = $2;`,
             [id, req.user.user_id]
         );
@@ -593,9 +632,17 @@ router.get('/test/:id', async (req, res) => {
 // GET /battle/:id - Get battle result
 router.get('/battle/:id', async (req, res) => {
     try {
+        const log = req.query.log || false;
+        const error = req.query.error || false;
         const { id } = req.params;
         const result = await pool.query(
-            `SELECT *
+            `SELECT 
+             id, competition_id, is_test,
+             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
+             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
+             created_at_utc, updated_at_utc
+             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
+             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
              FROM app.battle WHERE id = $1 AND (a_user_id = $2 OR b_user_id = $2);`,
             [id, req.user.user_id]
         );

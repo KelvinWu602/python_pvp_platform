@@ -63,7 +63,17 @@ def main():
     # — a determined attacker could still access builtins, import modules, etc.
     # The rlimits prevent abuse at the kernel level.
     namespace = {}
-    exec(payload['user_code'], namespace)
+    try:
+        exec(payload['user_code'], namespace)
+    except SyntaxError:
+        ipc_out.write(json.dumps({'ok': False, 'error': 'user provided code has syntax error'}) + '\n')
+        ipc_out.flush()
+        return
+    except Exception as e:
+        ipc_out.write(json.dumps({'ok': False, 'error': f'exec error: {e}'}) + '\n')
+        ipc_out.flush()
+        return
+
     update_func = namespace.get('update')
 
     # If the user forgot to define update(), tell the parent immediately

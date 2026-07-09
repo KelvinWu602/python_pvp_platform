@@ -153,11 +153,13 @@ def lambda_handler(event, context):
                 raise UserCodeError(worker_a.get_last_error() or worker_b.get_last_error())
             raise
 
-        # Capture player output from the subprocess pipes before closing.
-        a_stdout_log = worker_a.get_stdout_log()
-        a_stderr_log = worker_a.get_stderr_log()
-        b_stdout_log = worker_b.get_stdout_log()
-        b_stderr_log = worker_b.get_stderr_log()
+        # Drain all player output from the subprocess pipes.
+        a_logs = worker_a.drain_logs()
+        b_logs = worker_b.drain_logs()
+        a_stdout_log = a_logs['stdout']
+        a_stderr_log = a_logs['stderr']
+        b_stdout_log = b_logs['stdout']
+        b_stderr_log = b_logs['stderr']
 
         # The game engine writes VP9/WebM directly (cv2.VideoWriter 'VP90'),
         # which browsers play natively — no transcode step needed.
@@ -191,11 +193,14 @@ def lambda_handler(event, context):
         print(f'battle {battle_id} completed')
         return {'statusCode': 200, 'battle_id': battle_id}
 
-    except UserCodeError:
-        a_stdout_log = worker_a.get_stdout_log() if worker_a else None
-        a_stderr_log = worker_a.get_stderr_log() if worker_a else None
-        b_stdout_log = worker_b.get_stdout_log() if worker_b else None
-        b_stderr_log = worker_b.get_stderr_log() if worker_b else None
+    except UserCodeError as userCodeError:
+        print(f'UserCodeError: {userCodeError}')
+        a_logs = worker_a.drain_logs() if worker_a else {}
+        b_logs = worker_b.drain_logs() if worker_b else {}
+        a_stdout_log = a_logs.get('stdout')
+        a_stderr_log = a_logs.get('stderr')
+        b_stdout_log = b_logs.get('stdout')
+        b_stderr_log = b_logs.get('stderr')
         db_client.callback_battle(
             battle_id=battle_id,
             infra_ok=True, input_ok=False,

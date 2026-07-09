@@ -203,7 +203,7 @@ router.post('/battle-attempt/:battle_id', async (req, res) => {
 // PUT /battle/:battle_id - Lambda callback: record result 
 router.put('/battle/:battle_id', async (req, res) => {
     // either call by main or dlq consumer
-    let client = undefined;
+    let client;
     try {
         client = await pool.connect();
         const { battle_id } = req.params;
