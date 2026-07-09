@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 
 // Middleware for JSON parsing (common to all routes)
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Mount the route modules with base paths
 app.use('/admin', rootRoutes);

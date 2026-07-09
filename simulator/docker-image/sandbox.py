@@ -3,6 +3,7 @@ import json
 import subprocess
 import resource
 import select
+import jsonschema
 
 
 class UserCodeError(Exception):
@@ -223,12 +224,17 @@ class PlayerWorker:
     # waits for the child to compute the result, and reads controls back
     # from the child's stdout pipe. The game has no idea IPC is happening.
 
-    def __call__(self, game_states):
+    def __call__(self, game_states, controls_schema):
         try:
             self._write({'game_states': game_states})
             resp = self._read_ipc(timeout=1.0)
             if resp.get('ok'):
-                return resp['controls']
+                controls = resp['controls']
+                try:
+                    jsonschema.validate(controls, controls_schema)
+                except jsonschema.ValidationError as e:
+                    raise UserCodeError(f'controls: {e.message}')
+                return controls
             err = resp.get('error', 'unknown')
             self._last_error = err
             raise UserCodeError(err)

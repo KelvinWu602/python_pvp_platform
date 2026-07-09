@@ -7,15 +7,17 @@ import urllib.error
 class DBClient:
     """Simulator API client. Every operation is an HTTPS call to the API server.
 
-    The Lambda never queries the DB directly. All data access (snapshot code,
-    competition info, battle callbacks) goes through the API with a root Bearer
-    token. This also lets the Lambda run outside the VPC (no direct RDS need).
-
-    Config via env:
-      LAMBDA_CALLBACK_BASE_URL - base URL of the API server, e.g. https://api.example.com
-      LAMBDA_CALLBACK_TOKEN    - root Bearer token for callback auth
-      LAMBDA_CALLBACK_TIMEOUT  - per-request timeout in seconds (default 10)
+    Log fields larger than _MAX_LOG_LENGTH are trimmed before sending to avoid
+    triggering Express's body-parser size limit on the API side.
     """
+
+    _MAX_LOG_LENGTH = 10 * 1024
+
+    @staticmethod
+    def _trim(text):
+        if text and len(text) > DBClient._MAX_LOG_LENGTH:
+            return text[:DBClient._MAX_LOG_LENGTH] + '\n... [truncated]'
+        return text
 
     def __init__(self):
         base = os.environ.get('LAMBDA_CALLBACK_BASE_URL')
@@ -100,10 +102,10 @@ class DBClient:
             'winner_user_id': winner_user_id,
             'loser_user_id': loser_user_id,
             'video_reference': video_reference,
-            'a_stdout_log': a_stdout_log,
-            'a_stderr_log': a_stderr_log,
-            'b_stdout_log': b_stdout_log,
-            'b_stderr_log': b_stderr_log,
+            'a_stdout_log': self._trim(a_stdout_log),
+            'a_stderr_log': self._trim(a_stderr_log),
+            'b_stdout_log': self._trim(b_stdout_log),
+            'b_stderr_log': self._trim(b_stderr_log),
         }
         self._request('PUT', f'/admin/battle/{battle_id}', body)
 

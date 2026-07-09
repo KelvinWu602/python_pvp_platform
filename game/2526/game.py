@@ -34,6 +34,15 @@ import math
 import cv2
 import numpy as np
 
+CONTROLS_SCHEMA = {
+    "type": "array",
+    "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+    ],
+    "items": False,
+}
+
 
 class BaseGame:
     """Minimal game base class. Inlined (instead of importing from a sibling
@@ -380,19 +389,11 @@ class Game(BaseGame):
                 }
 
                 try:
-                    controls = strat(game_states)
+                    controls = strat(game_states, CONTROLS_SCHEMA)
                 except Exception as e:
                     raise Exception(f'Strategy {tag} error: {e}')
 
-                if not isinstance(controls, (tuple, list)) or len(controls) != 2:
-                    raise Exception(f'Strategy {tag} error: Wrong returned value ({controls})')
-                try:
-                    alpha1 = float(controls[0])
-                    alpha2 = float(controls[1])
-                except (TypeError, ValueError):
-                    raise Exception(f'Strategy {tag} error: non-numeric controls ({controls})')
-                if not (math.isfinite(alpha1) and math.isfinite(alpha2)):
-                    raise Exception(f'Strategy {tag} error: controls must be finite ({controls})')
+                alpha1, alpha2 = controls
                 car.step(alpha1, alpha2, self.dt, self.blocks)
 
                 if car.finish_time is None and self._in_finish(car):
