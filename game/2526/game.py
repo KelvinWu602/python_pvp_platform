@@ -384,8 +384,16 @@ class Game(BaseGame):
                 except Exception as e:
                     raise Exception(f'Strategy {tag} error: {e}')
 
-                alpha1, alpha2 = controls
-                car.step(float(alpha1), float(alpha2), self.dt, self.blocks)
+                if not isinstance(controls, (tuple, list)) or len(controls) != 2:
+                    raise Exception(f'Strategy {tag} error: Wrong returned value ({controls})')
+                try:
+                    alpha1 = float(controls[0])
+                    alpha2 = float(controls[1])
+                except (TypeError, ValueError):
+                    raise Exception(f'Strategy {tag} error: non-numeric controls ({controls})')
+                if not (math.isfinite(alpha1) and math.isfinite(alpha2)):
+                    raise Exception(f'Strategy {tag} error: controls must be finite ({controls})')
+                car.step(alpha1, alpha2, self.dt, self.blocks)
 
                 if car.finish_time is None and self._in_finish(car):
                     car.finish_time = self.time
