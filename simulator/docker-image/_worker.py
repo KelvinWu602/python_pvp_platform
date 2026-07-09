@@ -1,67 +1,25 @@
 import sys
 import json
 import os
-
-
-def _apply_seccomp():
-    try:
-        import pyseccomp as seccomp
-        f = seccomp.SyscallFilter(seccomp.ALLOW)
-        f.add_rule(seccomp.KILL, "socket")
-        f.add_rule(seccomp.KILL, "connect")
-        f.load()
-    except Exception:
-        pass
+import resource
 
 
 def main():
-    # ── Startup handshake ──────────────────────────────────────────────
-    #
-    # The parent (sandbox.py) spawns us with subprocess.Popen(stdin=PIPE, stdout=PIPE).
-    # Our stdin/stdout are connected to pipe objects in the parent process:
-    #
-    #   We read from:  sys.stdin   ← data written by parent to self._proc.stdin
-    #   We write to:   sys.stdout  → data read  by parent from self._proc.stdout
-    #
-    # The first message from the parent contains the user's code and (optionally)
-    # a helper directory path. We exec() the user code into a namespace, then
-    # look for an update() function.
-
-    # sys.stdin.readline() blocks until a complete line (ending with \n) arrives
-    # through the pipe. If the pipe is closed (parent crashed), we get "" and exit.
     line = sys.stdin.readline()
     if not line:
         return
     payload = json.loads(line)
 
-    # If the game defines a helper module, add its directory to sys.path so the
-    # user code can `import helper`. The parent downloads the helper from S3 and
-    # writes it to /tmp/sandbox/helper.py before spawning us.
     helper_dir = payload.get('helper_dir', '')
     if helper_dir:
         sys.path.insert(0, helper_dir)
 
-    # Open dedicated IPC channel on the fd passed by the parent via pass_fds.
-    # The parent sends the actual fd number in the startup payload so the
-    # child always opens the right one (fd number is not guaranteed to be 4).
-    # All IPC JSON messages go here, keeping sys.stdout (fd 1) free for the
-    # user's print() output and sys.stderr (fd 2) for Python tracebacks.
     ipc_fd = payload.get('ipc_fd', 4)
     ipc_out = os.fdopen(ipc_fd, 'w')
-
-    # Seccomp is applied before user code executes, so module-level code
-    # cannot use sockets/connect. Communication with the parent uses only
-    # stdin/stdout pipes (fd 0/1), which are not affected.
-    _apply_seccomp()
 
     # exec() compiles and runs the user's Python code in a fresh dict namespace.
     # This is equivalent to executing the code at module level. After exec(),
     # any functions/classes defined by the user are in `namespace`.
-    #
-    # Security note: we rely on the OS-level rlimits (CPU, memory, no subprocesses,
-    # no file writes) set by the parent's preexec_fn. exec() itself is not sandboxed
-    # — a determined attacker could still access builtins, import modules, etc.
-    # The rlimits prevent abuse at the kernel level.
     namespace = {}
     try:
         exec(payload['user_code'], namespace)

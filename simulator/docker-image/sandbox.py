@@ -34,14 +34,26 @@ class PlayerWorker:
         'LAMBDA_CALLBACK_BASE_URL',
         'LAMBDA_CALLBACK_TOKEN',
         'LAMBDA_CALLBACK_TIMEOUT',
+        'AWS_ACCESS_KEY_ID',
+        'AWS_SECRET_ACCESS_KEY',
+        'AWS_SESSION_TOKEN',
+        'AWS_SECURITY_TOKEN',
+        'AWS_REGION',
+        'AWS_DEFAULT_REGION',
+        'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+        'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+        'AWS_LAMBDA_RUNTIME_API',
+        '_X_AMZN_TRACE_ID',
     })
     _WORKER_PATH = os.path.join(HERE, '_worker.py')
     _RLIMITS = {
         resource.RLIMIT_CPU: (1, 1),
-        resource.RLIMIT_NPROC: (0, 0),
         resource.RLIMIT_FSIZE: (0, 0),
+        resource.RLIMIT_NPROC: (0, 0),
         resource.RLIMIT_AS: (64 * 1024 * 1024, 64 * 1024 * 1024),
     }
+    # RLIMIT_NPROC is NOT set here — it's applied by _worker.py after
+    # the startup handshake, before exec()'ing the user code.
 
     def __init__(self, user_code, helper_dir=None):
         self._user_code = user_code
@@ -97,7 +109,7 @@ class PlayerWorker:
         # Send the user's code, helper path, and IPC fd number to the child
         # via its stdin pipe. The child reads this with sys.stdin.readline()
         # in _worker.py and uses ipc_fd to open the dedicated IPC channel.
-        startup = {'user_code': self._user_code, 'ipc_fd': ipc_w}
+        startup = {'user_code': self._user_code, 'ipc_fd': ipc_w, 'nproc_limit': 0}
         if self._helper_dir:
             startup['helper_dir'] = self._helper_dir
         self._write(startup)

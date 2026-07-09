@@ -19,10 +19,9 @@
 FROM public.ecr.aws/lambda/python:3.12
 
 # opencv-python-headless needs mesa-libGL at runtime even without a GUI.
-# libseccomp is required by pyseccomp for the sandbox subprocess.
 # The game engine writes VP9/WebM directly via opencv, so no system ffmpeg
 # is needed. (dnf is the package manager on the AL2023-based Lambda base image.)
-RUN dnf install -y mesa-libGL-24.2.6-1268.amzn2023.0.1 libseccomp-2.5.3-1.amzn2023.0.2 && \
+RUN dnf install -y mesa-libGL-24.2.6-1268.amzn2023.0.1 && \
     dnf clean all
 # Install Python dependencies into the Lambda task root.
 COPY docker-image/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt

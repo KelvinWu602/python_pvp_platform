@@ -9,5 +9,6 @@ numpy
 # full opencv-python needs, which keeps the Lambda image small.
 opencv-python-headless
 
-pyseccomp
+Cython
+
 jsonschema
