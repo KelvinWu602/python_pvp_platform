@@ -245,7 +245,6 @@ router.put('/battle/:battle_id', async (req, res) => {
         // and the handler ok only if this endpoint ok
         if (battleResult.rows.length === 0) {
             await client.query('ROLLBACK;');
-            client.release();
             // Row not found or already resolved — either way, nothing to do
             return res.status(200).json({ message: 'No update needed' });
         }
