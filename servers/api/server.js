@@ -32,7 +32,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start the server
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
 

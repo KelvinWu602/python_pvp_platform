@@ -33,3 +33,7 @@ Create SSH Tunnel to the RDS
 ```
 ssh -i sensitive/python-pvp-ec2.pem -N -L 5433:python-pvp-db.cpwowc44igh2.ap-southeast-1.rds.amazonaws.com:5432 ubuntu@13.212.111.107
 ```
+
+```
+ssh -i sensitive/python-pvp-ec2.pem ubuntu@13.212.111.107
+```

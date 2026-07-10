@@ -8,10 +8,11 @@ and put nginx + TLS in front of it on port 443.
 This guide uses the deploy artifacts already in this repo:
 
 | File | Role |
-|---|---|
+|---|---|---|
 | `deploy/python-pvp-api.service` | systemd unit (runs `node server.js` as `appuser`) |
 | `deploy/load-ssm-secrets.sh` | `ExecStartPre` hook: pulls secrets from SSM → `/etc/python_pvp/api.env` |
 | `deploy/api-server-policy.json` | IAM policy for the EC2 instance role (SQS send + SSM read) |
+| `servers/python-pvp-api.nginx.conf` | nginx site config (TLS + internal HTTP proxy) |
 
 > Region throughout: **ap-southeast-1**. Account id in `api-server-policy.json`
 > is `097142190893` — change it to yours.
@@ -21,18 +22,29 @@ This guide uses the deploy artifacts already in this repo:
 ## Architecture recap
 
 ```
-Internet ──HTTPS:443──► nginx (TLS) ──proxy──► node server.js (127.0.0.1:3000)
-                                                   │
-                                                   ├─ pg.Pool ──► RDS (python-pvp-db)
-                                                   └─ SQS SendMessage ──► python-pvp-battle-queue
+                          ┌── HTTPS:443 (internet) ──┐
+                          │                          ▼
+Internet/Browser ─────────┤                   ┌────────────┐
+                          │                   │  nginx     │
+                          │   HTTP:80  (VPC)  │ (TLS term) │
+Lambda (VPC) ─────────────┘                   │            │
+                                              └─────┬──────┘
+                                                    │ proxy
+                                                    ▼
+                                          node server.js
+                                          (127.0.0.1:3000)
+                                                    │
+                                                    ├─ pg.Pool ──► RDS
+                                                    └─ SQS ──► Lambda
 ```
 
-- The Node process listens on **3000** (binds `0.0.0.0`); nginx terminates TLS and
-  proxies to it. The instance's security group exposes **443** to the internet and
-  **3000** only to the VPC CIDR (Lambda inside VPC calls the private IP directly).
-- The frontend browser calls the API over **public HTTPS** (`api.coding-master.kelvin-test.xyz`).
-  The simulator Lambda, deployed inside the VPC, calls the EC2 **private IP** on
-  port **3000** directly (bypassing nginx).
+- Node binds `127.0.0.1:3000` only — never reachable from the network directly.
+- nginx listens on `0.0.0.0:443` (TLS, internet) and `0.0.0.0:80` (VPC-internal).
+  Both proxy to `http://127.0.0.1:3000`.
+- The instance security group allows **443** from `0.0.0.0/0` (browsers) and
+  **80** from the VPC CIDR only (Lambda inside VPC calls via HTTP on port 80).
+- The frontend browser uses `https://api.coding-master.kelvin-test.xyz`.
+  The simulator Lambda uses `http://<ec2-private-ip>:80` (no TLS within VPC).
 - Secrets come from **SSM Parameter Store** at service start — nothing sensitive
   is written into the repo or the AMI.
 
@@ -146,13 +158,13 @@ put_secret /python_pvp/api/SIM_API_TOKEN    '00000000-0000-0000-0000-00000000000
 - **Security group** (`python-pvp-api-sg`) — create/attach one allowing inbound:
   - `22/tcp` from your admin IP only,
   - `443/tcp` from `0.0.0.0/0` (HTTPS from the world),
-  - `3000/tcp` from the **VPC CIDR** (or Lambda security group) — Lambda callback.
+  - `80/tcp` from the **VPC CIDR** (or Lambda security group) — Lambda callback
+    via nginx HTTP.
 - Ensure this instance's SG is allowed inbound on `5432` by **`python-pvp-db-sg`**
   so the app can reach RDS.
 
-> Port **80** is intentionally closed — TLS certificates are obtained via
-> **DNS-01 challenge** (Route53 API), not HTTP-01. HTTP is blocked from the
-> internet at the network level.
+> Port 80 is **not** open to the internet — only within the VPC. TLS certificates
+> are obtained via **DNS-01 challenge** (Route53 API), not HTTP-01.
 
 Point your DNS `A` record (`api.coding-master.kelvin-test.xyz`) at the **Elastic IP**.
 
@@ -247,8 +259,8 @@ curl -s http://127.0.0.1:3000/api/competition | head
 
 Terminate TLS at nginx and proxy to the Node process on localhost.
 
-Because port 80 is blocked at the security group, use the **DNS-01 challenge**
-instead of HTTP-01. The EC2 instance role already has
+Port 80 is open only within the VPC — certbot cannot use HTTP-01 from the
+internet. Use the **DNS-01 challenge** instead. The EC2 instance role already has
 `route53:ChangeResourceRecordSets` (from Step 1), so certbot can create the
 `_acme-challenge` TXT record via the Route53 API.
 
@@ -264,37 +276,32 @@ sudo certbot certonly --dns-route53 \
 sudo systemctl list-timers | grep certbot
 ```
 
-### 7.2 — Configure nginx (HTTPS only, no port 80)
+### 7.2 — Configure nginx
+
+nginx listens on both port 443 (TLS, internet) and port 80 (plain HTTP, VPC
+internal only) and routes both to the Node process on localhost:3000.
+
+The config file is checked in at `servers/python-pvp-api.nginx.conf`.
+Copy it and enable the site:
 
 ```bash
-sudo tee /etc/nginx/sites-available/python-pvp-api >/dev/null <<'NGINX'
-server {
-    listen 443 ssl;
-    server_name api.coding-master.kelvin-test.xyz;
-
-    ssl_certificate     /etc/letsencrypt/live/api.coding-master.kelvin-test.xyz/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.coding-master.kelvin-test.xyz/privkey.pem;
-
-    location / {
-        proxy_pass         http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        # Replay videos / large code bodies: allow a generous request size.
-        client_max_body_size 5m;
-    }
-}
-NGINX
+sudo cp /opt/python_pvp_platform/servers/python-pvp-api.nginx.conf \
+        /etc/nginx/sites-available/python-pvp-api
 
 sudo ln -sf /etc/nginx/sites-available/python-pvp-api /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-> There is no `listen 80` — HTTP is blocked at the network level. The Lambda
-> calls the EC2 private IP on port 3000 directly and never touches nginx.
+> The config includes three server blocks:
+> - `api.coding-master.kelvin-test.xyz:443` → `localhost:3000` (API)
+> - `coding-master.kelvin-test.xyz:443` → `localhost:3001` (web frontend)
+> - `_:80` (VPC internal) → `localhost:3000` (Lambda callback)
+>
+> Edit the `server_name` values if your domains differ. Port 80 is blocked
+> from the internet at the SG level — only VPC-internal traffic (the Lambda)
+> can reach it. The Lambda's `LAMBDA_CALLBACK_BASE_URL` is set to
+> `http://<ec2-private-ip>:80`.
 
 ---
 
@@ -363,10 +370,8 @@ A `403` here means the service account isn't seeded as `root`
 
 ## Security notes
 
-- `server.js` binds `0.0.0.0:3000` (not just 127.0.0.1) so the Lambda inside the VPC
-  can reach it via the EC2 private IP. Restrict access with the **security group**:
-  port 3000 is only open to the VPC CIDR and Lambda security group, never to the
-  internet.
+- `server.js` binds `127.0.0.1:3000` only. It is never reachable from the network
+  directly — all traffic goes through nginx.
 - The systemd unit is already hardened (`NoNewPrivileges`, `ProtectSystem=strict`,
   `PrivateTmp`, `ProtectHome`); keep those.
 - CORS is restricted via the `CORS_ORIGIN` SSM parameter/env var
