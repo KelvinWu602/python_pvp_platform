@@ -27,11 +27,12 @@ Internet ──HTTPS:443──► nginx (TLS) ──proxy──► node server.j
                                                    └─ SQS SendMessage ──► python-pvp-battle-queue
 ```
 
-- The Node process listens only on **localhost:3000**; nginx terminates TLS and
-  proxies to it. The instance's security group exposes **443** (and **22** for
-  SSH) to the internet, never 3000.
-- The app must be **publicly reachable over HTTPS** so the simulator Lambda can
-  call `/api/internal/*` from outside the VPC (see `docs/security.md`).
+- The Node process listens on **3000** (binds `0.0.0.0`); nginx terminates TLS and
+  proxies to it. The instance's security group exposes **443** to the internet and
+  **3000** only to the VPC CIDR (Lambda inside VPC calls the private IP directly).
+- The frontend browser calls the API over **public HTTPS** (`api.coding-master.kelvin-test.xyz`).
+  The simulator Lambda, deployed inside the VPC, calls the EC2 **private IP** on
+  port **3000** directly (bypassing nginx).
 - Secrets come from **SSM Parameter Store** at service start — nothing sensitive
   is written into the repo or the AMI.
 
@@ -41,7 +42,7 @@ Internet ──HTTPS:443──► nginx (TLS) ──proxy──► node server.j
 
 - An AWS account with the VPC/subnets/RDS/SQS from `AWS resource.md` already created.
 - The RDS database initialized (`database/readme.md`: migrations 1–4).
-- A domain name you can point at the instance (for TLS), e.g. `api.yourdomain.com`.
+- A domain name you can point at the instance (for TLS), e.g. `api.coding-master.kelvin-test.xyz`.
 - AWS CLI configured locally (`aws sts get-caller-identity` works).
 
 ---
@@ -81,6 +82,23 @@ aws iam put-role-policy \
 aws iam create-instance-profile --instance-profile-name "$ROLE"
 aws iam add-role-to-instance-profile \
   --instance-profile-name "$ROLE" --role-name "$ROLE"
+
+# Route53 permissions (certbot DNS-01 challenge — writes TXT records).
+aws iam put-role-policy \
+  --role-name "$ROLE" \
+  --policy-name route53-certbot \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": [
+        "route53:ListHostedZones",
+        "route53:GetChange",
+        "route53:ChangeResourceRecordSets"
+      ],
+      "Resource": "*"
+    }]
+  }'
 ```
 
 > If you use CloudWatch Logs/SSM Session Manager, also attach the AWS-managed
@@ -104,6 +122,7 @@ put        /python_pvp/api/DB_PORT          5432
 put        /python_pvp/api/DB_NAME          python_pvp
 put        /python_pvp/api/AWS_REGION       ap-southeast-1
 put        /python_pvp/api/BATTLE_QUEUE_URL https://sqs.ap-southeast-1.amazonaws.com/<account>/python-pvp-battle-queue
+put        /python_pvp/api/CORS_ORIGIN      https://coding-master.kelvin-test.xyz
 put_secret /python_pvp/api/DB_PASSWORD      '<your-db-password>'
 put_secret /python_pvp/api/MASTER_KEY       '<long-random-string>'
 put_secret /python_pvp/api/SIM_API_TOKEN    '00000000-0000-0000-0000-000000000002'
@@ -123,14 +142,19 @@ put_secret /python_pvp/api/SIM_API_TOKEN    '00000000-0000-0000-0000-00000000000
   obtain a TLS cert; assign a public IP (or attach an Elastic IP for a stable address).
 - **IAM instance profile:** `python-pvp-api-server` (from Step 1).
 - **Key pair:** `python-pvp-ec2` (or your own) for SSH.
-- **Security group** — create/attach one allowing inbound:
+- **Elastic IP** — allocate and associate one for a stable public endpoint.
+- **Security group** (`python-pvp-api-sg`) — create/attach one allowing inbound:
   - `22/tcp` from your admin IP only,
-  - `80/tcp` from `0.0.0.0/0` (certbot HTTP-01 challenge + redirect),
-  - `443/tcp` from `0.0.0.0/0`.
+  - `443/tcp` from `0.0.0.0/0` (HTTPS from the world),
+  - `3000/tcp` from the **VPC CIDR** (or Lambda security group) — Lambda callback.
 - Ensure this instance's SG is allowed inbound on `5432` by **`python-pvp-db-sg`**
   so the app can reach RDS.
 
-Point your DNS `A` record (`api.yourdomain.com`) at the instance's public/Elastic IP.
+> Port **80** is intentionally closed — TLS certificates are obtained via
+> **DNS-01 challenge** (Route53 API), not HTTP-01. HTTP is blocked from the
+> internet at the network level.
+
+Point your DNS `A` record (`api.coding-master.kelvin-test.xyz`) at the **Elastic IP**.
 
 ---
 
@@ -146,8 +170,8 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 
 # Tooling: git, nginx (TLS reverse proxy), AWS CLI (used by the SSM script),
-# and the certbot nginx plugin.
-sudo apt install -y git nginx awscli certbot python3-certbot-nginx
+# and the certbot Route53 plugin (DNS-01 challenge, no port 80 needed).
+sudo apt install -y git nginx awscli certbot python3-certbot-dns-route53
 
 node --version   # expect v20.x
 aws --version
@@ -223,11 +247,33 @@ curl -s http://127.0.0.1:3000/api/competition | head
 
 Terminate TLS at nginx and proxy to the Node process on localhost.
 
+Because port 80 is blocked at the security group, use the **DNS-01 challenge**
+instead of HTTP-01. The EC2 instance role already has
+`route53:ChangeResourceRecordSets` (from Step 1), so certbot can create the
+`_acme-challenge` TXT record via the Route53 API.
+
+### 7.1 — Install the TLS certificate
+
+```bash
+# DNS must already point at the Elastic IP before running this.
+sudo certbot certonly --dns-route53 \
+  -d api.coding-master.kelvin-test.xyz \
+  --non-interactive --agree-tos -m admin@coding-master.kelvin-test.xyz
+
+# certbot installs a systemd timer for auto-renewal; confirm it:
+sudo systemctl list-timers | grep certbot
+```
+
+### 7.2 — Configure nginx (HTTPS only, no port 80)
+
 ```bash
 sudo tee /etc/nginx/sites-available/python-pvp-api >/dev/null <<'NGINX'
 server {
-    listen 80;
-    server_name api.yourdomain.com;
+    listen 443 ssl;
+    server_name api.coding-master.kelvin-test.xyz;
+
+    ssl_certificate     /etc/letsencrypt/live/api.coding-master.kelvin-test.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.coding-master.kelvin-test.xyz/privkey.pem;
 
     location / {
         proxy_pass         http://127.0.0.1:3000;
@@ -245,14 +291,10 @@ NGINX
 sudo ln -sf /etc/nginx/sites-available/python-pvp-api /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
-
-# Obtain and install a Let's Encrypt cert (auto-edits the nginx config for 443
-# and sets up an HTTP->HTTPS redirect). DNS must already point at this host.
-sudo certbot --nginx -d api.yourdomain.com --non-interactive --agree-tos -m you@yourdomain.com
-
-# certbot installs a systemd timer for auto-renewal; confirm it:
-sudo systemctl list-timers | grep certbot
 ```
+
+> There is no `listen 80` — HTTP is blocked at the network level. The Lambda
+> calls the EC2 private IP on port 3000 directly and never touches nginx.
 
 ---
 
@@ -261,18 +303,18 @@ sudo systemctl list-timers | grep certbot
 From your laptop (not the box), confirm public HTTPS works:
 
 ```bash
-curl -i https://api.yourdomain.com/api/competition
+curl -i https://api.coding-master.kelvin-test.xyz/api/competition
 ```
 
 Then exercise the full auth path:
 
 ```bash
 # Create a user, log in, and confirm a token comes back.
-curl -s -X POST https://api.yourdomain.com/api/user \
+curl -s -X POST https://api.coding-master.kelvin-test.xyz/api/user \
   -H 'Content-Type: application/json' \
   -d '{"username":"smoke","full_name":"Smoke Test","password":"pw123456"}'
 
-curl -s -X POST https://api.yourdomain.com/api/user/session \
+curl -s -X POST https://api.coding-master.kelvin-test.xyz/api/user/session \
   -H 'Content-Type: application/json' \
   -d '{"username":"smoke","password":"pw123456"}'
 # -> {"auth_token":"<uuid>"}
@@ -283,7 +325,7 @@ Confirm the service-account / internal path works (the Lambda relies on this):
 ```bash
 # Should be 404 (auth passed, code id not found) — NOT 403/401.
 curl -s -o /dev/null -w '%{http_code}\n' \
-  https://api.yourdomain.com/api/internal/code/00000000-0000-0000-0000-000000000000 \
+  https://api.coding-master.kelvin-test.xyz/api/internal/code/00000000-0000-0000-0000-000000000000 \
   -H "Authorization: Bearer 00000000-0000-0000-0000-000000000002"
 ```
 
@@ -314,20 +356,21 @@ A `403` here means the service account isn't seeded as `root`
 | App starts but DB calls 500 | RDS unreachable: confirm `python-pvp-db-sg` allows 5432 from this instance's SG, and `DB_HOST`/`DB_PORT` SSM values are correct. The app uses SSL with `rejectUnauthorized:false` (see `utils/db.js`). |
 | `502 Bad Gateway` from nginx | Node process is down (`systemctl status python-pvp-api`) or not on 3000. |
 | Lambda gets `403` on `/api/internal/*` | Service account not seeded as `root`, or `SIM_API_TOKEN` mismatch between DB, SSM, and the Lambda env var. |
-| certbot fails | DNS not yet pointing at the host, or port 80 blocked by the security group. |
+| certbot fails | DNS not yet pointing at the host, or the instance role lacks `route53:ChangeResourceRecordSets`. |
 | Secrets script can't read region/account | IMDSv2-only instance; see the IMDS note in Step 6. |
 
 ---
 
 ## Security notes
 
-- Node listens on **127.0.0.1:3000 only** conceptually — but `server.js` binds
-  `0.0.0.0` by default. Rely on the **security group** to keep 3000 closed to the
-  internet (only 80/443/22 open). For defense in depth, you can set
-  `app.listen(PORT, '127.0.0.1', ...)`.
+- `server.js` binds `0.0.0.0:3000` (not just 127.0.0.1) so the Lambda inside the VPC
+  can reach it via the EC2 private IP. Restrict access with the **security group**:
+  port 3000 is only open to the VPC CIDR and Lambda security group, never to the
+  internet.
 - The systemd unit is already hardened (`NoNewPrivileges`, `ProtectSystem=strict`,
   `PrivateTmp`, `ProtectHome`); keep those.
-- `cors()` in `server.js` is currently wide open — restrict the allowed origin
-  to your web frontend before production.
+- CORS is restricted via the `CORS_ORIGIN` SSM parameter/env var
+  (default `*` for development). Set it to the frontend domain
+  (`https://coding-master.kelvin-test.xyz`) in production.
 - See `docs/security.md` for the full secret-management and network model.
 ```

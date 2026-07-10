@@ -10,8 +10,12 @@ const pool = require('./utils/db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Allow cross-origin requests (debug page is opened from file:// or another port)
-app.use(cors());
+// Allow cross-origin requests. Set CORS_ORIGIN env var (e.g.
+// https://coding-master.kelvin-test.xyz) in production. Default * for dev.
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || '*',
+};
+app.use(cors(corsOptions));
 
 // Middleware for JSON parsing (common to all routes)
 app.use(express.json({ limit: '1mb' }));
