@@ -12,6 +12,31 @@ class UserCodeError(Exception):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# Maximum log bytes to preserve per stream (stdout / stderr) before writing
+# to the DB. The `update()` function runs at 60 FPS for up to 30s, so a chatty
+# print() in the game loop can produce hundreds of KB of output per test.
+# We keep only the tail because that's usually where errors surface. When
+# truncation happens, a marker line is prepended so the user knows.
+MAX_LOG_BYTES = 32 * 1024
+
+
+def _truncate_log(data):
+    """Turn a raw bytes buffer into a UTF-8 string, truncated to the last
+    MAX_LOG_BYTES if it exceeds that. Called once per stream in drain_logs()."""
+    if not data:
+        return ''
+    if len(data) <= MAX_LOG_BYTES:
+        return data.decode('utf-8', errors='replace')
+    tail = data[-MAX_LOG_BYTES:]
+    # Best-effort snap to the next newline so the truncated view doesn't
+    # start mid-line. Only skip up to 1KB so we don't chop away a whole line
+    # of a very long single-line log.
+    nl = tail.find(b'\n')
+    if 0 <= nl < 1024:
+        tail = tail[nl + 1:]
+    marker = f'[log truncated; showing last {MAX_LOG_BYTES // 1024}KB]\n'.encode('utf-8')
+    return (marker + tail).decode('utf-8', errors='replace')
+
 
 class PlayerWorker:
     """Runs a player's strategy in a sandboxed subprocess.
@@ -140,8 +165,10 @@ class PlayerWorker:
         stdout/stderr. This is called once after the game loop finishes —
         no more frames are sent.
 
-        Returns {'stdout': str, 'stderr': str} with all user code print()
-        output and error output captured.
+        Returns {'stdout': str, 'stderr': str} with the user code's print()
+        output and error output. Each stream is truncated to the last
+        MAX_LOG_BYTES bytes (see module-level _truncate_log) so we don't
+        write megabytes of `hi\n` to the DB when a user prints once per frame.
         """
         stdout, stderr = self._proc.communicate(timeout=5)
         self._proc = None
@@ -149,8 +176,8 @@ class PlayerWorker:
             self._ipc_file.close()
             self._ipc_file = None
         return {
-            'stdout': stdout.decode('utf-8', errors='replace') if stdout else '',
-            'stderr': stderr.decode('utf-8', errors='replace') if stderr else '',
+            'stdout': _truncate_log(stdout),
+            'stderr': _truncate_log(stderr),
         }
 
     def close(self):

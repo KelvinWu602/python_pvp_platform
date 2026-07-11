@@ -54,11 +54,15 @@ export async function renderTestResult(testId) {
     }
     poll();
 
+    // Track <details> open state across polls. On the first render (both
+    // null) we start closed, then auto-open the stderr card if there is
+    // any stderr content. Subsequent polls preserve whatever the user set.
+    let outputOpen = null;
+    let errorOpen = null;
+
     function renderInfo(test) {
-        // Header: identify which snapshot
         const isDone = test.infra_ok !== null;
         const success = test.infra_ok === true && test.input_ok === true;
-        const failed = test.infra_ok === false || test.input_ok === false;
 
         let resultBadge = '';
         if (isDone) {
@@ -72,6 +76,12 @@ export async function renderTestResult(testId) {
         } else {
             resultBadge = `<span style="color:#64748b;">${t.inProgress}</span>`;
         }
+
+        // Capture prior open state before we blow away the DOM.
+        const priorOutputEl = infoBox.querySelector('[data-output-details]');
+        const priorErrorEl = infoBox.querySelector('[data-error-details]');
+        if (priorOutputEl) outputOpen = priorOutputEl.open;
+        if (priorErrorEl) errorOpen = priorErrorEl.open;
 
         infoBox.innerHTML = `
             <div class="pvp-card-sub" style="text-align:center; padding: 0.5rem 0 1rem;">
@@ -92,14 +102,72 @@ export async function renderTestResult(testId) {
                 </div>
             </div>
             <div class="pvp-card" style="flex-direction:column; align-items:flex-start; cursor:default;">
-                <div style="font-weight:600; margin-bottom:0.5rem;">${t.output}</div>
-                <pre style="width:100%; margin:0; white-space:pre-wrap; word-break:break-all; font-family:'JetBrains Mono',monospace; font-size:0.85rem; color:#334155;">${escapeHtml(test.a_stdout_log || '')}</pre>
+                <details class="log-details" data-output-details>
+                    <summary>
+                        <span class="log-title">${t.output}</span>
+                        <span class="log-meta" data-output-meta></span>
+                    </summary>
+                    <div class="log-viewer" data-output-viewer></div>
+                </details>
             </div>
             <div class="pvp-card" style="flex-direction:column; align-items:flex-start; cursor:default;">
-                <div style="font-weight:600; margin-bottom:0.5rem;">${t.errorMessage}</div>
-                <pre style="width:100%; margin:0; white-space:pre-wrap; word-break:break-all; font-family:'JetBrains Mono',monospace; font-size:0.85rem; color:#e63946;">${escapeHtml(test.a_stderr_log || '')}</pre>
+                <details class="log-details" data-error-details>
+                    <summary>
+                        <span class="log-title log-title-error">${t.errorMessage}</span>
+                        <span class="log-meta" data-error-meta></span>
+                    </summary>
+                    <div class="log-viewer log-viewer-error" data-error-viewer></div>
+                </details>
             </div>
         `;
+
+        fillLogViewer(
+            infoBox.querySelector('[data-output-viewer]'),
+            infoBox.querySelector('[data-output-meta]'),
+            test.a_stdout_log
+        );
+        fillLogViewer(
+            infoBox.querySelector('[data-error-viewer]'),
+            infoBox.querySelector('[data-error-meta]'),
+            test.a_stderr_log
+        );
+
+        // Restore prior open state; on the first render, default-open the
+        // error card iff there's any stderr (errors are what users want
+        // to see first).
+        const outputDetails = infoBox.querySelector('[data-output-details]');
+        const errorDetails = infoBox.querySelector('[data-error-details]');
+        outputDetails.open = outputOpen === null ? false : outputOpen;
+        if (errorOpen === null) {
+            errorDetails.open = (test.a_stderr_log || '').length > 0;
+        } else {
+            errorDetails.open = errorOpen;
+        }
+    }
+
+    // Populate a log viewer div with numbered rows. `text` may be null/undefined
+    // (still loading) or empty string (test produced no output).
+    function fillLogViewer(viewer, meta, text) {
+        const str = text || '';
+        if (!str) {
+            viewer.innerHTML = `<div class="log-empty">${t.noOutput}</div>`;
+            meta.textContent = '';
+            return;
+        }
+        // Strip a single trailing newline so we don't render an empty last row.
+        const trimmed = str.endsWith('\n') ? str.slice(0, -1) : str;
+        const lines = trimmed.split('\n');
+        meta.textContent = `(${lines.length} ${t.lines})`;
+        // Right-align line numbers to the widest line-number width.
+        const digits = String(lines.length).length;
+        // Build with an array + join for speed with thousands of lines.
+        const rows = new Array(lines.length);
+        for (let i = 0; i < lines.length; i++) {
+            const num = String(i + 1).padStart(digits, ' ');
+            const body = escapeHtml(lines[i]) || '&nbsp;';
+            rows[i] = `<div class="log-row"><span class="log-lineno">${num}</span><span class="log-line">${body}</span></div>`;
+        }
+        viewer.innerHTML = rows.join('');
     }
 
     function renderVideo(test) {

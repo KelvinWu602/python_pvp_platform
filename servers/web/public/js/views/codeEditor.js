@@ -282,11 +282,10 @@ export async function renderCodeEditor(codeId) {
             // Status badge — exactly one, based on test_status.
             switch (s.test_status) {
                 case 'success': {
-                    const star = document.createElement('div');
-                    star.className = 'star';
-                    star.textContent = '★';
-                    star.title = '此 snapshot 已測試';
-                    right.appendChild(star);
+                    const pill = document.createElement('span');
+                    pill.className = 'pill pill-success';
+                    pill.textContent = t.testSuccess;
+                    right.appendChild(pill);
                     break;
                 }
                 case 'pending': {

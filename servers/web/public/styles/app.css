@@ -193,6 +193,56 @@ html, body {
 .badge-draw { color: var(--color-draw); font-weight: 700; }
 .badge-success { color: var(--color-success); font-weight: 700; }
 
+/* ─── Test log viewer (collapsible, numbered) ─── */
+/* Used by testResult.js for stdout / stderr display. The user's update()
+   runs once per frame at 60 FPS × 30s → up to 1800 lines of output per
+   test, so each log lives inside a collapsible <details> with a
+   fixed-height scroll box and a line-number rail. */
+.log-details { width: 100%; }
+.log-details > summary {
+    display: flex; align-items: center; gap: 0.5rem;
+    cursor: pointer; list-style: none;
+    padding: 0.15rem 0;
+    user-select: none;
+}
+.log-details > summary::-webkit-details-marker { display: none; }
+.log-details > summary::before {
+    content: '▶'; font-size: 0.7rem; color: #64748b;
+    display: inline-block; transition: transform 0.15s;
+    width: 0.8rem;
+}
+.log-details[open] > summary::before { transform: rotate(90deg); }
+.log-title { font-weight: 600; }
+.log-title-error { color: var(--color-lose); }
+.log-meta { color: #94a3b8; font-weight: 400; font-size: 0.85rem; }
+
+.log-viewer {
+    margin-top: 0.5rem; width: 100%;
+    max-height: 320px; overflow: auto;
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 0.82rem; line-height: 1.4;
+    color: #334155;
+}
+.log-viewer.log-viewer-error { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.log-row { display: flex; gap: 0.75rem; padding: 0 0.6rem; }
+.log-row:hover { background: rgba(0,0,0,0.03); }
+.log-viewer-error .log-row:hover { background: rgba(220, 38, 38, 0.06); }
+.log-lineno {
+    color: #94a3b8; user-select: none;
+    text-align: right; flex: 0 0 auto;
+    white-space: pre;
+}
+.log-line {
+    white-space: pre;               /* long lines scroll horizontally, no mid-token wrap */
+    flex: 1; min-width: 0;
+}
+.log-empty {
+    padding: 1rem; color: #94a3b8; font-style: italic; text-align: center;
+    font-family: 'Noto Sans TC', sans-serif;
+}
+
 /* ─── Snapshot status pills (code editor snapshot list) ─── */
 .pill {
     display: inline-flex; align-items: center; gap: 0.35rem;
@@ -200,6 +250,7 @@ html, body {
     font-size: 0.8rem; font-weight: 700; white-space: nowrap;
 }
 .pill-testing     { background: #fff4e0; color: #b26b00; }
+.pill-success     { background: #dcfce7; color: var(--color-success); }
 .pill-user-error  { background: #fde2e4; color: var(--color-lose); }
 .pill-infra-error { background: #e2e8f0; color: #475569; }
 .pill-testing::before {
