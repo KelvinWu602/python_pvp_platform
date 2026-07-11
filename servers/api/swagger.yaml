@@ -1222,7 +1222,9 @@ paths:
       description: |
         Main Lambda calls with infra_ok=true; DLQ consumer with infra_ok=false.
         Uses `WHERE infra_ok IS NULL` so late retries don't overwrite success.
-        Also updates win_count/lose_count/tie_count on app.enroll for completed battles.
+        Also updates win_count/lose_count/tie_count on app.enroll for completed
+        **non-test** battles. Test battles (`is_test = true`) never mutate the
+        counters — they run against the NPC as a self-check only.
       tags: [Admin, Lambda]
       security: [{ BearerAuth: [] }]
       parameters:

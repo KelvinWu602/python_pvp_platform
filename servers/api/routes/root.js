@@ -458,7 +458,10 @@ router.put('/battle/:battle_id', async (req, res) => {
         }
 
         const battle = battleResult.rows[0];
-        if (battle.infra_ok && battle.input_ok) {
+        // Test battles run against the NPC as a self-check. They must NOT
+        // affect the user's competition win/lose/tie counters — only real
+        // matches (is_test = false) with a successful outcome update them.
+        if (!battle.is_test && battle.infra_ok && battle.input_ok) {
             if (battle.draw) {
                 await client.query(
                     `UPDATE app.enroll SET tie_count = tie_count + 1
