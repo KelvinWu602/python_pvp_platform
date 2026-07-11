@@ -12,18 +12,24 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/styles/app.css">
 
-    <!-- CodeMirror 6 via ESM (esm.sh). Pinned versions to keep a single
-         dedup'd runtime for @codemirror/language across all packages. -->
+    <!-- CodeMirror 6 via ESM (esm.sh). Pinned versions AND ?deps= on every
+         URL so transitive @codemirror/* sub-imports resolve to the same pinned
+         instance. Without ?deps=, esm.sh emits floating range specifiers like
+         `@codemirror/language@^6.8.0` for lang-python's internal imports,
+         which bypass this import map and load a SECOND copy of the language
+         runtime. Two runtimes → editor state produced by one is read by the
+         other → `TypeError: Cannot read properties of undefined (reading
+         'length')` in view.findPos, no syntax highlighting, no autocomplete. -->
     <script type="importmap">
     {
       "imports": {
         "@codemirror/state":         "https://esm.sh/@codemirror/state@6.4.1",
-        "@codemirror/view":          "https://esm.sh/@codemirror/view@6.26.3",
-        "@codemirror/language":      "https://esm.sh/@codemirror/language@6.10.1",
-        "@codemirror/commands":      "https://esm.sh/@codemirror/commands@6.3.3",
-        "@codemirror/autocomplete":  "https://esm.sh/@codemirror/autocomplete@6.12.0",
-        "@codemirror/lang-python":   "https://esm.sh/@codemirror/lang-python@6.1.6",
-        "@codemirror/theme-one-dark":"https://esm.sh/@codemirror/theme-one-dark@6.1.2"
+        "@codemirror/view":          "https://esm.sh/@codemirror/view@6.26.3?deps=@codemirror/state@6.4.1",
+        "@codemirror/language":      "https://esm.sh/@codemirror/language@6.10.1?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3",
+        "@codemirror/commands":      "https://esm.sh/@codemirror/commands@6.3.3?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.1",
+        "@codemirror/autocomplete":  "https://esm.sh/@codemirror/autocomplete@6.12.0?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.1",
+        "@codemirror/lang-python":   "https://esm.sh/@codemirror/lang-python@6.1.6?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.1,@codemirror/autocomplete@6.12.0",
+        "@codemirror/theme-one-dark":"https://esm.sh/@codemirror/theme-one-dark@6.1.2?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.1"
       }
     }
     </script>
