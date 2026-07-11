@@ -1,0 +1,34 @@
+[Unit]
+Description=python-pvp Web frontend (static files)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/python_pvp_platform/servers/web
+Environment=PORT=3001
+Environment=HOST=127.0.0.1
+# Use a system-wide Node install (e.g. NodeSource -> /usr/bin/node), NOT an
+# nvm path under a user's home: the service runs as `appuser` with
+# ProtectHome=true, so anything under /home/* is invisible to it.
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+# Security hardening: drop as many privileges as possible.
+# No secrets are needed by the web tier (all config is baked into public/index.html
+# as <meta> tags), so no EnvironmentFile bootstrap.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=python-pvp-web
+
+[Install]
+WantedBy=multi-user.target

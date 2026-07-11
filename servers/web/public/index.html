@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://api.coding-master.kelvin-test.xyz">
+    <meta name="s3-base" content="https://python-pvp-store.s3.amazonaws.com">
+    <meta name="organizer-contact" content="mailto:admin@coding-master.kelvin-test.xyz">
+    <title>順德聯誼總會翁祐中學 扣叮大師官方網站</title>
+
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/styles/app.css">
+
+    <!-- CodeMirror 6 via ESM bundled with Skypack for zero-build. -->
+    <script type="importmap">
+    {
+      "imports": {
+        "codemirror": "https://esm.sh/codemirror@6.0.1",
+        "@codemirror/state": "https://esm.sh/@codemirror/state@6.4.1",
+        "@codemirror/view": "https://esm.sh/@codemirror/view@6.26.3",
+        "@codemirror/lang-python": "https://esm.sh/@codemirror/lang-python@6.1.6",
+        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2"
+      }
+    }
+    </script>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+    <div id="app"></div>
+
+    <!-- Modal root -->
+    <div id="modal-root"></div>
+
+    <!-- Toast root -->
+    <div id="toast-root" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+    <script type="module" src="/js/main.js"></script>
+</body>
+</html>
