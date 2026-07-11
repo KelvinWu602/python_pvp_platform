@@ -206,6 +206,21 @@ router.get('/code/:code_id', checkCodeOwner, async (req, res) => {
 });
 
 // GET /code/:code_id/snapshot - List snapshots for a code (metadata only)
+//
+// Response fields per snapshot:
+//   id, created_at_utc  — basic snapshot metadata
+//   test_id             — id of the LATEST test battle for this snapshot, or null
+//   test_status         — 'pending' | 'success' | 'user_error' | 'infra_error' | null
+//                         (derived from the latest test battle's infra_ok / input_ok)
+//   tested              — backwards-compat convenience: test_status === 'success'
+//   retestable          — true when the user is allowed to launch a new test.
+//                         false when ANY test battle exists for this snapshot with
+//                         infra_ok = true (success / user_error) or infra_ok IS NULL
+//                         (pending). A prior infra_error alone leaves the snapshot
+//                         retestable because that failure is on the platform side.
+//
+// The user's snapshot only ever appears on the 'a' side of test battles (the 'b'
+// side is always the NPC's snapshot in tests), so we check `a_snapshot_id` only.
 router.get('/code/:code_id/snapshot', checkCodeOwner, async (req, res) => {
     try {
         const { code_id } = req.params;
@@ -213,22 +228,39 @@ router.get('/code/:code_id/snapshot', checkCodeOwner, async (req, res) => {
             `SELECT
                s.id,
                s.created_at_utc,
-               (SELECT b.id FROM app.battle b
-                WHERE b.is_test = true
-                  AND (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
-                  AND b.infra_ok = true AND b.input_ok = true
-                ORDER BY b.created_at_utc DESC LIMIT 1) AS test_id
+               latest.battle_id AS test_id,
+               latest.status    AS test_status,
+               NOT EXISTS (
+                   SELECT 1 FROM app.battle b2
+                   WHERE b2.is_test = true
+                     AND b2.a_snapshot_id = s.id
+                     AND (b2.infra_ok IS NULL OR b2.infra_ok = true)
+               ) AS retestable
              FROM app.snapshot s
+             LEFT JOIN LATERAL (
+                 SELECT b.id AS battle_id,
+                        CASE
+                          WHEN b.infra_ok IS NULL AND b.input_ok IS NULL THEN 'pending'
+                          WHEN b.infra_ok = true AND b.input_ok = true   THEN 'success'
+                          WHEN b.infra_ok = true AND b.input_ok = false  THEN 'user_error'
+                          ELSE 'infra_error'
+                        END AS status
+                 FROM app.battle b
+                 WHERE b.is_test = true
+                   AND b.a_snapshot_id = s.id
+                 ORDER BY b.created_at_utc DESC LIMIT 1
+             ) latest ON true
              WHERE s.code_id = $1
              ORDER BY s.created_at_utc DESC;`,
             [code_id]
         );
-        // Derive tested boolean from test_id presence
         const rows = result.rows.map(r => ({
             id: r.id,
             created_at_utc: r.created_at_utc,
-            tested: r.test_id !== null,
             test_id: r.test_id,
+            test_status: r.test_status,        // null when no test battle exists yet
+            tested: r.test_status === 'success',
+            retestable: r.retestable,
         }));
         return res.status(200).json(rows);
     } catch (err) {
@@ -450,6 +482,40 @@ router.post('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN;');
+
+            // Lock the snapshot row for the duration of this transaction so
+            // two concurrent POSTs for the same a_snapshot_id serialize here.
+            // The second waits until the first commits, then observes the
+            // first's INSERT via the guard SELECT below and returns 409.
+            const lockResult = await client.query(
+                `SELECT id FROM app.snapshot WHERE id = $1 FOR UPDATE;`,
+                [a_snapshot_id]
+            );
+            if (lockResult.rowCount === 0) {
+                await client.query('ROLLBACK;');
+                return res.status(404).json({ error: 'snapshot not found' });
+            }
+
+            // Reject if this snapshot has already been tested (success /
+            // user_error) or is currently being tested (pending). Only a
+            // prior infra_error leaves the snapshot retestable, because that
+            // failure is on the platform side.
+            //
+            // We check `a_snapshot_id` only: the user's snapshot only ever
+            // appears on the 'a' side of test battles (the 'b' side is
+            // always the NPC's snapshot in tests).
+            const guardResult = await client.query(
+                `SELECT 1 FROM app.battle
+                  WHERE is_test = true
+                    AND a_snapshot_id = $1
+                    AND (infra_ok IS NULL OR infra_ok = true)
+                  LIMIT 1;`,
+                [a_snapshot_id]
+            );
+            if (guardResult.rowCount > 0) {
+                await client.query('ROLLBACK;');
+                return res.status(409).json({ error: 'snapshot already tested or a test is in progress' });
+            }
 
             const battleResult = await client.query(
                 `INSERT INTO app.battle (competition_id, is_test, a_user_id, a_snapshot_id, b_user_id, b_snapshot_id)

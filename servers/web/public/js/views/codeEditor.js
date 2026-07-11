@@ -15,6 +15,7 @@ export async function renderCodeEditor(codeId) {
             <div class="pvp-panel-header">
                 <button class="back-btn" title="返回">⬅</button>
                 <span data-code-name>代碼</span>
+                <button class="refresh-btn" data-refresh title="${t.refresh}">↻</button>
             </div>
             <div class="pvp-panel-body" data-snap-list>
                 <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
@@ -193,9 +194,7 @@ export async function renderCodeEditor(codeId) {
             const newCode = view.state.doc.toString();
             await api.updateCode(codeId, newCode);
             toast('已儲存', 'success');
-            // Reload snapshots
-            snapshots = await api.listSnapshots(codeId);
-            renderSnapshots();
+            await refreshSnapshots();
         } catch (err) {
             toast(err.body?.error || t.generalError, 'error');
         } finally {
@@ -205,8 +204,55 @@ export async function renderCodeEditor(codeId) {
     });
 
     const snapList = container.querySelector('[data-snap-list]');
-    renderSnapshots();
+    const refreshBtn = container.querySelector('[data-refresh]');
 
+    // ── Refresh + polling ────────────────────────────────────────────────
+    //
+    // Users need to see snapshot state flip from `pending` → success/failed
+    // without a full page reload. Strategy:
+    //   * Manual `↻` button: always re-fetches on click.
+    //   * Auto-poll every 10s while ANY snapshot has test_status='pending'.
+    //     Stops as soon as none are pending. Also cleaned up on hashchange
+    //     so leaving the page doesn't keep firing requests.
+    //
+    // Silent errors: background polls swallow network errors (a transient
+    // failure shouldn't blast a toast every 10s).
+    let pollTimer = null;
+    function schedulePollIfNeeded() {
+        const anyPending = snapshots.some(s => s.test_status === 'pending');
+        if (anyPending && !pollTimer) {
+            pollTimer = setInterval(() => { refreshSnapshots({ silent: true }); }, 10000);
+        } else if (!anyPending && pollTimer) {
+            clearInterval(pollTimer); pollTimer = null;
+        }
+    }
+    async function refreshSnapshots({ silent = false } = {}) {
+        if (!silent) {
+            refreshBtn.disabled = true;
+            refreshBtn.classList.add('spinning');
+        }
+        try {
+            snapshots = await api.listSnapshots(codeId);
+            renderSnapshots();
+            schedulePollIfNeeded();
+        } catch (err) {
+            if (!silent) toast(err.body?.error || t.generalError, 'error');
+        } finally {
+            if (!silent) {
+                refreshBtn.disabled = false;
+                refreshBtn.classList.remove('spinning');
+            }
+        }
+    }
+    refreshBtn.addEventListener('click', () => refreshSnapshots());
+    window.addEventListener('hashchange', () => {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }, { once: true });
+
+    renderSnapshots();
+    schedulePollIfNeeded();
+
+    // ── Render ───────────────────────────────────────────────────────────
     function renderSnapshots() {
         snapList.innerHTML = '';
         if (snapshots.length === 0) {
@@ -233,14 +279,46 @@ export async function renderCodeEditor(codeId) {
             right.style.alignItems = 'center';
             right.style.gap = '0.75rem';
 
-            if (s.tested) {
-                const star = document.createElement('div');
-                star.className = 'star';
-                star.textContent = '★';
-                star.title = '此 snapshot 已測試';
-                right.appendChild(star);
+            // Status badge — exactly one, based on test_status.
+            switch (s.test_status) {
+                case 'success': {
+                    const star = document.createElement('div');
+                    star.className = 'star';
+                    star.textContent = '★';
+                    star.title = '此 snapshot 已測試';
+                    right.appendChild(star);
+                    break;
+                }
+                case 'pending': {
+                    const pill = document.createElement('span');
+                    pill.className = 'pill pill-testing';
+                    pill.textContent = t.testing;
+                    right.appendChild(pill);
+                    break;
+                }
+                case 'user_error': {
+                    const pill = document.createElement('span');
+                    pill.className = 'pill pill-user-error';
+                    pill.textContent = t.userError;
+                    right.appendChild(pill);
+                    break;
+                }
+                case 'infra_error': {
+                    const pill = document.createElement('span');
+                    pill.className = 'pill pill-infra-error';
+                    pill.textContent = t.infraError;
+                    right.appendChild(pill);
+                    break;
+                }
+                default:
+                    // null → never tested; no badge.
+                    break;
             }
-            if (isLatest && enrollForCompetition) {
+
+            // 測試 button: only on the latest snapshot, only when this
+            // snapshot is retestable (never tested, or previous run was
+            // infra_error), and the user is enrolled in the competition.
+            if (isLatest && enrollForCompetition && s.retestable) {
                 const testBtn = document.createElement('button');
                 testBtn.className = 'test-btn';
                 testBtn.textContent = t.test;
@@ -252,7 +330,15 @@ export async function renderCodeEditor(codeId) {
                         const res = await api.createTest(enrollForCompetition.id);
                         location.hash = `#/test/${res.id}`;
                     } catch (err) {
-                        toast(err.body?.error || t.generalError, 'error');
+                        // 409 = server-side race we lost (someone else just
+                        // pushed a test in). Show the specific i18n message
+                        // and refresh so the UI reflects the new state.
+                        if (err.status === 409) {
+                            toast(t.retestBlocked, 'error');
+                            refreshSnapshots({ silent: true });
+                        } else {
+                            toast(err.body?.error || t.generalError, 'error');
+                        }
                         testBtn.disabled = false;
                         testBtn.textContent = t.test;
                     }
@@ -262,6 +348,8 @@ export async function renderCodeEditor(codeId) {
 
             card.appendChild(right);
 
+            // Any test_id (any status) → clicking the card opens the test
+            // detail page. That page already polls for pending → done.
             if (s.test_id) {
                 card.addEventListener('click', () => {
                     location.hash = `#/test/${s.test_id}`;

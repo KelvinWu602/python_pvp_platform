@@ -294,9 +294,9 @@ paths:
       operationId: listCodeSnapshots
       summary: List snapshots for a code (metadata only, no source text)
       description: |
-        Returns snapshot metadata newest-first. Each row includes whether the
-        snapshot has a completed test battle and the corresponding test_id
-        (for linking to the test result page).
+        Returns snapshot metadata newest-first. Each row carries the latest
+        test battle's id and status, plus a `retestable` flag the UI uses to
+        decide whether to show the 測試 button. See SnapshotSummary schema.
       tags: [User]
       security: [{ BearerAuth: [] }]
       parameters:
@@ -479,6 +479,11 @@ paths:
       description: |
         Uses the user's latest snapshot and the NPC's latest *tested* snapshot.
         The Lambda processes the battle asynchronously.
+
+        Rejects with 409 Conflict if the user's latest snapshot has already been
+        tested (success or user_error) or is currently being tested (pending).
+        Only a prior infra_error leaves the snapshot retestable — see the
+        `retestable` field on SnapshotSummary.
       tags: [User, Test]
       security: [{ BearerAuth: [] }]
       parameters:
@@ -504,6 +509,17 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: |
+            Snapshot already tested or a test is in progress. User must edit
+            and save to create a new snapshot before testing again.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -1136,14 +1152,33 @@ components:
         created_at_utc:
           type: string
           format: date-time
-        tested:
-          type: boolean
-          description: Whether this snapshot has a completed test battle
         test_id:
           type: string
           format: uuid
           nullable: true
-          description: ID of the latest completed test battle for this snapshot, or null
+          description: ID of the LATEST test battle for this snapshot (any status), or null if none
+        test_status:
+          type: string
+          nullable: true
+          enum: [pending, success, user_error, infra_error, null]
+          description: |
+            Status of the latest test battle for this snapshot:
+              * `null`         — no test battle has been created yet
+              * `pending`      — battle exists but Lambda has not reported back (infra_ok IS NULL)
+              * `success`      — infra_ok=true AND input_ok=true
+              * `user_error`   — infra_ok=true AND input_ok=false (user code error)
+              * `infra_error`  — infra_ok=false (platform-side failure; retest allowed)
+        tested:
+          type: boolean
+          description: |
+            Backwards-compat convenience field: `test_status === 'success'`.
+        retestable:
+          type: boolean
+          description: |
+            Whether the user is allowed to launch a new test for this snapshot.
+            True when no test battle exists for this snapshot with infra_ok=true
+            or infra_ok IS NULL (i.e. success/user_error/pending). Infra_error
+            alone leaves the snapshot retestable.
 
     Enroll:
       type: object
