@@ -353,6 +353,21 @@ html, body {
     .two-col { grid-template-columns: 1fr; height: auto; }
 }
 
+/* Right column container used by the competition view to stack two
+   .pvp-panels vertically (應戰代碼 + 對戰紀錄). The first panel hugs its
+   content; the second panel takes the remaining vertical space and its
+   body scrolls internally so long histories don't push the code card out
+   of view. `min-height: 0` on the flex items is required for the inner
+   .pvp-panel-body's `overflow-y: auto` to engage. */
+.two-col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-height: 0;
+}
+.two-col-right .pvp-panel:first-child { flex: 0 0 auto; }
+.two-col-right .pvp-panel:last-child  { flex: 1 1 auto; min-height: 0; }
+
 /* ─── Video placeholder ─── */
 .video-container {
     background: #f1f3f5;

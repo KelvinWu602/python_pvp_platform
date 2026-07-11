@@ -20,10 +20,18 @@ export async function renderCompetition(enrollId) {
                 <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
             </div>
         </div>
-        <div class="pvp-panel">
-            <div class="pvp-panel-header">${t.battleCode}</div>
-            <div class="pvp-panel-body" data-code-body>
-                <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
+        <div class="two-col-right">
+            <div class="pvp-panel">
+                <div class="pvp-panel-header">${t.battleCode}</div>
+                <div class="pvp-panel-body" data-code-body>
+                    <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
+                </div>
+            </div>
+            <div class="pvp-panel">
+                <div class="pvp-panel-header">${t.battleHistory}</div>
+                <div class="pvp-panel-body" data-history-body>
+                    <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
+                </div>
             </div>
         </div>
     `;
@@ -61,7 +69,9 @@ export async function renderCompetition(enrollId) {
     renderCompBody();
 
     const codeBody = container.querySelector('[data-code-body]');
+    const historyBody = container.querySelector('[data-history-body]');
     renderCodeBody();
+    renderHistoryBody();
 
     // Countdown ticker
     const timer = setInterval(updateCountdown, 30_000);
@@ -179,8 +189,6 @@ export async function renderCompetition(enrollId) {
 
     function renderCodeBody() {
         codeBody.innerHTML = '';
-
-        // ── Linked-code card ─────────────────────────────────────────────
         if (linkedCode) {
             const card = document.createElement('div');
             card.className = 'pvp-card';
@@ -205,21 +213,15 @@ export async function renderCompetition(enrollId) {
             empty.textContent = t.noLinkedCode;
             codeBody.appendChild(empty);
         }
+    }
 
-        // ── Battle history section ──────────────────────────────────────
-        const historySection = document.createElement('div');
-        historySection.style.marginTop = '1.5rem';
-
-        const title = document.createElement('div');
-        title.className = 'admin-subtitle';
-        title.textContent = t.battleHistory;
-        historySection.appendChild(title);
-
-        const list = document.createElement('div');
-        historySection.appendChild(list);
-        codeBody.appendChild(historySection);
-
-        renderHistoryList(list);
+    // Renders the battle history list into the second right-column panel.
+    // The panel already carries its own orange 對戰紀錄 header (see the
+    // top-level template), so this function only paints the body: rows,
+    // empty-state placeholder, and the 顯示更多 button.
+    function renderHistoryBody() {
+        historyBody.innerHTML = '';
+        renderHistoryList(historyBody);
     }
 
     // Render the visible slice of shownBattles into `listEl`. Called on first
