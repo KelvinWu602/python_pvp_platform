@@ -1,7 +1,8 @@
 import { t, fmtDateTime } from '../i18n.js';
-import { api } from '../api.js';
+import { api, fetchManifest } from '../api.js';
 import { renderHeader } from '../components/header.js';
 import { toast } from '../components/toast.js';
+import { parseManifest, makePythonCompletionSource } from '../components/manifestCompletion.js';
 
 export async function renderCodeEditor(codeId) {
     const app = document.getElementById('app');
@@ -49,36 +50,114 @@ export async function renderCodeEditor(codeId) {
     container.querySelector('[data-code-name]').textContent = code.name;
 
     // Find user's enrollment matching this code's competition (to enable 測試 button)
+    // + fetch competition (for manifest_reference) in parallel.
+    let competition = null;
     try {
-        const enrolls = await api.listEnrolls();
+        const [enrolls, comp] = await Promise.all([
+            api.listEnrolls(),
+            api.getCompetition(code.competition_id).catch(() => null),
+        ]);
         enrollForCompetition = enrolls.find(e => e.competition_id === code.competition_id);
+        competition = comp;
     } catch { enrollForCompetition = null; }
+
+    // Fetch manifest.json from S3 (public bucket, direct browser fetch).
+    // Manifest drives autocomplete. Failure here is non-fatal — editor still
+    // works, just without autocomplete.
+    let manifest = null;
+    if (competition && competition.manifest_reference) {
+        manifest = await fetchManifest(competition.manifest_reference);
+    }
+    const manifestData = manifest ? parseManifest(manifest) : null;
+    const completionSource = manifestData ? makePythonCompletionSource(manifestData) : null;
 
     // Mount CodeMirror
     const cmHost = container.querySelector('[data-cm]');
     let view;
     try {
+        // Explicit extension imports — avoids the meta-package `codemirror`'s
+        // basicSetup which sometimes ships an inconsistent
+        // @codemirror/language runtime and breaks syntax highlighting.
         const { EditorState } = await import('@codemirror/state');
-        const { EditorView, keymap, lineNumbers, highlightActiveLine } = await import('@codemirror/view');
+        const {
+            EditorView, keymap, lineNumbers, highlightActiveLine,
+            highlightActiveLineGutter, highlightSpecialChars, drawSelection,
+            dropCursor, rectangularSelection, crosshairCursor,
+        } = await import('@codemirror/view');
+        const {
+            defaultHighlightStyle, syntaxHighlighting, indentOnInput,
+            bracketMatching, foldGutter, foldKeymap,
+        } = await import('@codemirror/language');
+        const {
+            defaultKeymap, history, historyKeymap, indentWithTab,
+        } = await import('@codemirror/commands');
+        const {
+            autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
+        } = await import('@codemirror/autocomplete');
         const { python } = await import('@codemirror/lang-python');
         const { oneDark } = await import('@codemirror/theme-one-dark');
-        const { basicSetup } = await import('codemirror');
+
+        const extensions = [
+            // Editor UX
+            lineNumbers(),
+            highlightActiveLineGutter(),
+            highlightSpecialChars(),
+            history(),
+            foldGutter(),
+            drawSelection(),
+            dropCursor(),
+            EditorState.allowMultipleSelections.of(true),
+            indentOnInput(),
+            // Syntax
+            python(),
+            syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+            bracketMatching(),
+            closeBrackets(),
+            // Autocomplete
+            autocompletion({
+                override: completionSource ? [completionSource] : undefined,
+                activateOnTyping: true,
+                closeOnBlur: true,
+                maxRenderedOptions: 20,
+            }),
+            rectangularSelection(),
+            crosshairCursor(),
+            highlightActiveLine(),
+            // Keymaps
+            keymap.of([
+                ...closeBracketsKeymap,
+                ...defaultKeymap,
+                ...historyKeymap,
+                ...foldKeymap,
+                ...completionKeymap,
+                indentWithTab,
+            ]),
+            // Theme
+            oneDark,
+            EditorView.theme({
+                '&': { height: '100%' },
+                '.cm-scroller': {
+                    fontFamily: 'JetBrains Mono, Consolas, monospace',
+                    fontSize: '14px',
+                },
+            }),
+        ];
 
         view = new EditorView({
             parent: cmHost,
             state: EditorState.create({
                 doc: code.code || '',
-                extensions: [
-                    basicSetup,
-                    python(),
-                    oneDark,
-                    EditorView.theme({
-                        '&': { height: '100%' },
-                        '.cm-scroller': { fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: '14px' },
-                    }),
-                ],
+                extensions,
             }),
         });
+
+        if (!completionSource) {
+            console.info('CodeEditor: no manifest available — autocomplete disabled.');
+        } else {
+            console.info(
+                `CodeEditor: autocomplete active (${manifestData.helpers.length} helpers, ${manifestData.topLevelKeys.length} game_states keys).`
+            );
+        }
     } catch (err) {
         console.error('CodeMirror failed to load, falling back to textarea:', err);
         cmHost.innerHTML = '';

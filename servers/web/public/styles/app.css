@@ -203,6 +203,43 @@ html, body {
 .cm-wrapper .cm-editor { flex: 1; }
 .cm-wrapper .cm-scroller { font-family: 'JetBrains Mono', 'Consolas', monospace; }
 
+/* Autocomplete popup — match the one-dark editor theme */
+.cm-tooltip.cm-tooltip-autocomplete {
+    background: #21252b;
+    border: 1px solid #3b4048;
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 13px;
+    color: #abb2bf;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul { max-height: 240px; }
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+    padding: 4px 10px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+    background: #3a3f4b;
+    color: #e6e6e6;
+}
+.cm-completionLabel { color: #e6e6e6; font-weight: 500; }
+.cm-completionMatchedText { color: #f39130; text-decoration: none; font-weight: 700; }
+.cm-completionDetail {
+    color: #7a8290; font-style: normal; margin-left: 0.75em; font-size: 12px;
+}
+.cm-completionIcon { margin-right: 6px; opacity: 0.8; }
+.cm-completionInfo {
+    background: #21252b;
+    border: 1px solid #3b4048;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #cdd0d5;
+    max-width: 360px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
 /* ─── Two-column layout ─── */
 .two-col {
     display: grid;

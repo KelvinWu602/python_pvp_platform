@@ -78,16 +78,10 @@ export async function renderDashboard() {
                 </div>
                 ${ongoing ? '<div class="pvp-card-arrow">➜</div>' : ''}
             `;
-            card.addEventListener('click', (ev) => {
-                if (ev.detail === 2 || ongoing) {
-                    // double-click OR ongoing → go into competition
-                    location.hash = `#/competition/${e.id}`;
-                } else {
-                    // single click → select on this panel
-                    selectEnroll(e);
-                }
-            });
-            // Explicit go-in via arrow
+            // Card body: always just selects (updates right-panel code list).
+            card.addEventListener('click', () => selectEnroll(e));
+
+            // Arrow (only rendered for ongoing competitions) navigates to detail page.
             const arrow = card.querySelector('.pvp-card-arrow');
             if (arrow) {
                 arrow.addEventListener('click', (ev) => {

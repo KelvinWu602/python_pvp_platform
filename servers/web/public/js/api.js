@@ -96,4 +96,26 @@ export function videoUrl(videoReference) {
     return `${S3_BASE}/${videoReference}`;
 }
 
+// Fetch a manifest.json (or any JSON asset) from the public S3 bucket.
+// Cached in sessionStorage keyed by the reference string.
+export async function fetchManifest(reference) {
+    if (!reference) return null;
+    const cacheKey = `pvp_manifest:${reference}`;
+    try {
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) return JSON.parse(cached);
+    } catch { /* ignore parse errors */ }
+
+    try {
+        const res = await fetch(`${S3_BASE}/${reference}`, { credentials: 'omit' });
+        if (!res.ok) return null;
+        const json = await res.json();
+        try { sessionStorage.setItem(cacheKey, JSON.stringify(json)); } catch { /* quota */ }
+        return json;
+    } catch (err) {
+        console.warn('Failed to fetch manifest:', err);
+        return null;
+    }
+}
+
 export { ApiError };
