@@ -1518,6 +1518,24 @@ components:
         updated_at_utc:
           type: string
           format: date-time
+        opponent_user_id:
+          type: string
+          format: uuid
+          description: |
+            Opponent user id (the side that isn't the caller). Populated only
+            by `GET /enroll/{enroll_id}/battle` where "opponent" is defined
+            relative to the caller. Omitted by other endpoints that return
+            Battle.
+        opponent_username:
+          type: string
+          description: |
+            Opponent username. Populated only by
+            `GET /enroll/{enroll_id}/battle`.
+        opponent_full_name:
+          type: string
+          description: |
+            Opponent full_name. Populated only by
+            `GET /enroll/{enroll_id}/battle`.
 
     Snapshot:
       type: object

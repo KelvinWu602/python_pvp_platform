@@ -738,6 +738,15 @@ router.post('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
 });
 
 // GET /enroll/:eid/battle - List battles for this enrollment
+//
+// For each battle, JOIN app.user to expose the OPPONENT's identity (the side
+// that isn't the caller). The frontend uses this to render a battle-history
+// list (competition page → 對戰紀錄) without needing a second round-trip to
+// resolve UUIDs to usernames.
+//
+// We intentionally do NOT filter by infra_ok/input_ok here; the frontend
+// hides failed battles (infra_error / user_error) at render time so the
+// endpoint's shape stays flexible for future consumers.
 router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
     try {
         const log = req.query.log || false;
@@ -750,16 +759,21 @@ router.get('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
         const { competition_id } = enrollResult.rows[0];
         const result = await pool.query(
             `SELECT
-             id, competition_id, is_test,
-             a_user_id, a_snapshot_id, b_user_id, b_snapshot_id, 
-             infra_ok, input_ok, draw, winner_user_id, loser_user_id, video_reference,
-             created_at_utc, updated_at_utc
-             ${ log ?`, a_stdout_log, b_stdout_log`:`` }
-             ${ error ?`, a_stderr_log, b_stderr_log`:`` }
-             FROM app.battle
-             WHERE competition_id = $1 AND is_test = false
-               AND (a_user_id = $2 OR b_user_id = $2)
-             ORDER BY created_at_utc DESC;`,
+             b.id, b.competition_id, b.is_test,
+             b.a_user_id, b.a_snapshot_id, b.b_user_id, b.b_snapshot_id,
+             b.infra_ok, b.input_ok, b.draw, b.winner_user_id, b.loser_user_id, b.video_reference,
+             b.created_at_utc, b.updated_at_utc,
+             CASE WHEN b.a_user_id = $2 THEN b.b_user_id ELSE b.a_user_id END AS opponent_user_id,
+             opp.username  AS opponent_username,
+             opp.full_name AS opponent_full_name
+             ${ log ?`, b.a_stdout_log, b.b_stdout_log`:`` }
+             ${ error ?`, b.a_stderr_log, b.b_stderr_log`:`` }
+             FROM app.battle b
+             JOIN app.user opp
+               ON opp.id = CASE WHEN b.a_user_id = $2 THEN b.b_user_id ELSE b.a_user_id END
+             WHERE b.competition_id = $1 AND b.is_test = false
+               AND (b.a_user_id = $2 OR b.b_user_id = $2)
+             ORDER BY b.created_at_utc DESC;`,
             [competition_id, req.user.user_id]
         );
         return res.status(200).json(result.rows);
