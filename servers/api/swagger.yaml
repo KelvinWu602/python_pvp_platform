@@ -110,6 +110,34 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /competition/{id}/score-histogram:
+    get:
+      operationId: getCompetitionScoreHistogram
+      summary: Get score distribution of enrolled players (excluding NPC)
+      description: |
+        Score = win_count * 2 + tie_count. Returns the histogram sorted ascending
+        plus the caller's own score for highlighting on the frontend.
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Score histogram
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScoreHistogram'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /user/session:
     delete:
       operationId: logout
@@ -142,7 +170,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name]
+              required: [name, code, competition_id]
               properties:
                 name:
                   type: string
@@ -150,8 +178,11 @@ paths:
                   example: my-bot-v1
                 code:
                   type: string
-                  description: Initial code text (optional — snapshot created only if provided)
-                  example: "def update(game_states):\n    return {'alpha1': 0.5, 'alpha2': -0.3}"
+                  description: Initial code text (empty string is allowed)
+                  example: ""
+                competition_id:
+                  type: string
+                  format: uuid
       responses:
         '201':
           description: Code created
@@ -255,6 +286,37 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /code/{code_id}/snapshot:
+    get:
+      operationId: listCodeSnapshots
+      summary: List snapshots for a code (metadata only, no source text)
+      description: |
+        Returns snapshot metadata newest-first. Each row includes whether the
+        snapshot has a completed test battle and the corresponding test_id
+        (for linking to the test result page).
+      tags: [User]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: code_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SnapshotSummary'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -521,8 +583,12 @@ paths:
   /enroll/{enroll_id}/battle:
     post:
       operationId: createBattle
-      summary: Create a battle vs another enrolled user
-      description: Both players must have a tested snapshot. Processed asynchronously via SQS → Lambda.
+      summary: Create a battle vs another enrolled user (or random opponent)
+      description: |
+        Both players must have a tested snapshot. Processed asynchronously via SQS → Lambda.
+        If `b_enroll_id` is provided, that specific opponent is used.
+        If omitted, the server picks a random eligible opponent (excluding self and NPC)
+        who has a tested snapshot. Returns 400 if no eligible opponent exists.
       tags: [User, Battle]
       security: [{ BearerAuth: [] }]
       parameters:
@@ -533,17 +599,16 @@ paths:
             type: string
             format: uuid
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [b_enroll_id]
               properties:
                 b_enroll_id:
                   type: string
                   format: uuid
-                  description: Opponent's enrollment ID
+                  description: Opponent's enrollment ID (optional — omit for random matchmaking)
       responses:
         '201':
           description: Battle created
@@ -1045,15 +1110,40 @@ components:
           format: uuid
         name:
           type: string
+        competition_id:
+          type: string
+          format: uuid
         code:
           type: string
-          description: Latest snapshot code text
+          description: Latest snapshot code text (only returned by GET /code/:id and GET /enroll/:eid/code, NOT by GET /code list)
+        created_at_utc:
+          type: string
+          format: date-time
+        updated_at_utc:
+          type: string
+          format: date-time
+          description: Latest snapshot's created_at_utc (returned by GET /code list)
+        tested:
+          type: boolean
+          description: Whether the latest snapshot has a completed battle
+
+    SnapshotSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
         created_at_utc:
           type: string
           format: date-time
         tested:
           type: boolean
-          description: Whether the latest snapshot has a completed battle
+          description: Whether this snapshot has a completed test battle
+        test_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the latest completed test battle for this snapshot, or null
 
     Enroll:
       type: object
@@ -1076,6 +1166,36 @@ components:
         tie_count:
           type: integer
           default: 0
+        competition_display_name:
+          type: string
+          description: Joined from app.competition
+        competition_description:
+          type: string
+        start_time_utc:
+          type: string
+          format: date-time
+        end_time_utc:
+          type: string
+          format: date-time
+
+    ScoreHistogram:
+      type: object
+      properties:
+        histogram:
+          type: array
+          items:
+            type: object
+            properties:
+              score:
+                type: integer
+                description: win_count * 2 + tie_count
+              count:
+                type: integer
+                description: Number of enrolled players (excluding NPC) with this score
+        my_score:
+          type: integer
+          nullable: true
+          description: Caller's own score in this competition, or null if not enrolled
 
     Battle:
       type: object

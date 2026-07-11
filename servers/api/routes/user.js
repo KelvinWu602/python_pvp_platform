@@ -54,12 +54,53 @@ router.get('/competition/:id', async (req, res) => {
     }
 });
 
+// GET /competition/:id/score-histogram - Score distribution of enrolled players
+// Score = win_count * 2 + tie_count. Excludes NPC. Returns my_score for the caller.
+router.get('/competition/:id/score-histogram', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const compResult = await pool.query(
+            `SELECT npc_user_id FROM app.competition WHERE id = $1;`,
+            [id]
+        );
+        if (compResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Competition not found' });
+        }
+        const { npc_user_id } = compResult.rows[0];
+
+        const histResult = await pool.query(
+            `SELECT (win_count * 2 + tie_count) AS score, COUNT(*)::int AS count
+             FROM app.enroll
+             WHERE competition_id = $1 AND user_id <> $2
+             GROUP BY score
+             ORDER BY score ASC;`,
+            [id, npc_user_id]
+        );
+
+        const myResult = await pool.query(
+            `SELECT (win_count * 2 + tie_count) AS score
+             FROM app.enroll
+             WHERE competition_id = $1 AND user_id = $2;`,
+            [id, req.user.user_id]
+        );
+
+        return res.status(200).json({
+            histogram: histResult.rows.map(r => ({ score: Number(r.score), count: r.count })),
+            my_score: myResult.rows.length > 0 ? Number(myResult.rows[0].score) : null,
+        });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
 // POST /code - Create code with initial snapshot
 router.post('/code', async (req, res) => {
     let client;
     try {
         const { name, code, competition_id } = req.body;
-        if (!name || !code || !competition_id) {
+        if (!name || code === undefined || code === null || !competition_id) {
             return res.status(400).json({ error: 'missing name, code or competition_id' });
         }
         client = await pool.connect();
@@ -103,21 +144,28 @@ router.put('/code/:code_id', checkCodeOwner, async (req, res) => {
     }
 });
 
-// GET /code - List my codes with latest code and tested status
+// GET /code - List my codes with latest snapshot metadata (no source text)
 router.get('/code', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT c.id, c.name, c.competition_id, c.created_at_utc,
-                    s.code AS code,
-                    EXISTS (
-                      SELECT 1 FROM app.battle b
-                      WHERE (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
-                        AND b.infra_ok = true AND b.input_ok = true
-                    ) AS tested
+            `SELECT
+               c.id, c.name, c.competition_id, c.created_at_utc,
+               latest.created_at_utc AS updated_at_utc,
+               COALESCE(latest.tested, false) AS tested
              FROM app.code c
-             LEFT JOIN app.snapshot s ON c.id = s.code_id
+             LEFT JOIN LATERAL (
+               SELECT s.created_at_utc,
+                      EXISTS (
+                        SELECT 1 FROM app.battle b
+                        WHERE (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
+                          AND b.infra_ok = true AND b.input_ok = true
+                      ) AS tested
+               FROM app.snapshot s
+               WHERE s.code_id = c.id
+               ORDER BY s.created_at_utc DESC
+               LIMIT 1
+             ) latest ON true
              WHERE c.user_id = $1
-               AND (s.id IS NULL OR s.id = (SELECT s2.id FROM app.snapshot s2 WHERE s2.code_id = c.id ORDER BY s2.created_at_utc DESC LIMIT 1))
              ORDER BY c.created_at_utc DESC;`,
             [req.user.user_id]
         );
@@ -157,11 +205,53 @@ router.get('/code/:code_id', checkCodeOwner, async (req, res) => {
     }
 });
 
-// GET /enroll - List my enrollments
+// GET /code/:code_id/snapshot - List snapshots for a code (metadata only)
+router.get('/code/:code_id/snapshot', checkCodeOwner, async (req, res) => {
+    try {
+        const { code_id } = req.params;
+        const result = await pool.query(
+            `SELECT
+               s.id,
+               s.created_at_utc,
+               (SELECT b.id FROM app.battle b
+                WHERE b.is_test = true
+                  AND (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
+                  AND b.infra_ok = true AND b.input_ok = true
+                ORDER BY b.created_at_utc DESC LIMIT 1) AS test_id
+             FROM app.snapshot s
+             WHERE s.code_id = $1
+             ORDER BY s.created_at_utc DESC;`,
+            [code_id]
+        );
+        // Derive tested boolean from test_id presence
+        const rows = result.rows.map(r => ({
+            id: r.id,
+            created_at_utc: r.created_at_utc,
+            tested: r.test_id !== null,
+            test_id: r.test_id,
+        }));
+        return res.status(200).json(rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// GET /enroll - List my enrollments (with competition metadata)
 router.get('/enroll', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT * FROM app.enroll WHERE user_id = $1;`,
+            `SELECT
+               e.id, e.competition_id, e.user_id,
+               e.win_count, e.lose_count, e.tie_count,
+               c.display_name    AS competition_display_name,
+               c.description     AS competition_description,
+               c.start_time_utc,
+               c.end_time_utc
+             FROM app.enroll e
+             JOIN app.competition c ON c.id = e.competition_id
+             WHERE e.user_id = $1
+             ORDER BY c.start_time_utc DESC;`,
             [req.user.user_id]
         );
         return res.status(200).json(result.rows);
@@ -171,12 +261,21 @@ router.get('/enroll', async (req, res) => {
     }
 });
 
-// GET /enroll/:enroll_id - Get enrollment
+// GET /enroll/:enroll_id - Get enrollment (with competition metadata)
 router.get('/enroll/:enroll_id', checkEnrollOwner, async (req, res) => {
     try {
         const { enroll_id } = req.params;
         const result = await pool.query(
-            `SELECT * FROM app.enroll WHERE id = $1;`,
+            `SELECT
+               e.id, e.competition_id, e.user_id,
+               e.win_count, e.lose_count, e.tie_count,
+               c.display_name    AS competition_display_name,
+               c.description     AS competition_description,
+               c.start_time_utc,
+               c.end_time_utc
+             FROM app.enroll e
+             JOIN app.competition c ON c.id = e.competition_id
+             WHERE e.id = $1;`,
             [enroll_id]
         );
         return res.status(200).json(result.rows[0]);
@@ -444,26 +543,52 @@ router.get('/test', async (req, res) => {
 // ─── Battle endpoints (is_test = false) ───────────────────────
 
 // POST /enroll/:eid/battle - Create battle vs opponent
+// If b_enroll_id is provided: fight that opponent.
+// If omitted: pick a random enrolled opponent (excluding self + NPC) with tested code.
 router.post('/enroll/:enroll_id/battle', checkEnrollOwner, async (req, res) => {
     try {
         const user_id = req.user.user_id;
         const enroll_id = req.params.enroll_id;
-        const { b_enroll_id } = req.body;
+        let { b_enroll_id } = req.body || {};
 
-        if (!b_enroll_id) {
-            return res.status(400).json({ error: 'missing b_enroll_id' });
-        }
-
-        if (b_enroll_id === enroll_id) {
+        if (b_enroll_id && b_enroll_id === enroll_id) {
             return res.status(400).json({ error: 'Cannot battle yourself' });
         }
 
         const enrollResult = await pool.query(
-            `SELECT e.competition_id, e.user_id AS a_uid
-             FROM app.enroll e WHERE e.id = $1;`,
+            `SELECT e.competition_id, c.npc_user_id
+             FROM app.enroll e
+             JOIN app.competition c ON c.id = e.competition_id
+             WHERE e.id = $1;`,
             [enroll_id]
         );
-        const { competition_id } = enrollResult.rows[0];
+        const { competition_id, npc_user_id } = enrollResult.rows[0];
+
+        // Random matchmaking when no opponent specified
+        if (!b_enroll_id) {
+            const randResult = await pool.query(
+                `SELECT e.id
+                 FROM app.enroll e
+                 JOIN app.code_select cs ON cs.enroll_id = e.id
+                 WHERE e.competition_id = $1
+                   AND e.id <> $2
+                   AND e.user_id <> $3
+                   AND EXISTS (
+                     SELECT 1 FROM app.snapshot s
+                     JOIN app.battle b
+                       ON (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
+                      AND b.infra_ok = true AND b.input_ok = true
+                     WHERE s.code_id = cs.code_id
+                   )
+                 ORDER BY random()
+                 LIMIT 1;`,
+                [competition_id, enroll_id, npc_user_id]
+            );
+            if (randResult.rows.length === 0) {
+                return res.status(400).json({ error: 'No eligible opponent available' });
+            }
+            b_enroll_id = randResult.rows[0].id;
+        }
 
         const oppResult = await pool.query(
             `SELECT e.id, e.user_id, cs.code_id

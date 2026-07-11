@@ -341,15 +341,109 @@ A `403` here means the service account isn't seeded as `root`
 
 ---
 
+## Step 9 — Deploy the web frontend
+
+The web frontend (`servers/web/`) is a static SPA served by a tiny Node
+`express.static` server bound to `127.0.0.1:3001`. The existing nginx config
+(`servers/python-pvp-api.nginx.conf`, lines 20–36) already terminates TLS for
+`coding-master.kelvin-test.xyz` and proxies to `localhost:3001`, and the TLS
+certificate obtained in Step 7.1 already covers this domain (via the same
+`fullchain.pem`).
+
+> No nginx changes are required. No new SSM secrets are required. The API base
+> URL and public S3 base URL are baked into `servers/web/public/index.html` as
+> `<meta>` tags.
+
+### 9.1 — Install dependencies and deploy the code
+
+The repo should already be at `/opt/python_pvp_platform` from Step 5.
+
+```bash
+cd /opt/python_pvp_platform/servers/web
+sudo npm ci --omit=dev             # installs express only
+
+# If you edited config, adjust the meta tags in public/index.html:
+#   <meta name="api-base"    content="https://api.coding-master.kelvin-test.xyz">
+#   <meta name="s3-base"     content="https://python-pvp-store.s3.amazonaws.com">
+#   <meta name="organizer-contact" content="mailto:...">
+```
+
+### 9.2 — Install the systemd service
+
+```bash
+sudo cp /opt/python_pvp_platform/deploy/python-pvp-web.service \
+        /etc/systemd/system/python-pvp-web.service
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now python-pvp-web
+
+sudo systemctl status python-pvp-web --no-pager
+journalctl -u python-pvp-web -n 30 --no-pager
+```
+
+Expected log line: `Web server running on http://127.0.0.1:3001`.
+
+### 9.3 — Smoke test
+
+Local (on the box):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/           # → 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/js/main.js # → 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/anything   # → 200 (SPA fallback)
+```
+
+Public (from your laptop):
+
+```bash
+curl -I https://coding-master.kelvin-test.xyz/
+# HTTP/2 200
+# content-type: text/html; charset=UTF-8
+```
+
+Open `https://coding-master.kelvin-test.xyz/` in a browser and confirm:
+
+1. Login page (page 1) loads with hero + username/password form.
+2. Log in with a seeded user → dashboard (page 2) loads two panels.
+3. Clicking a competition arrow enters the competition detail (page 5).
+4. `+` tile in the code panel opens the create-code modal.
+
+### 9.4 — Re-deploys
+
+```bash
+cd /opt/python_pvp_platform && sudo git pull
+cd /opt/python_pvp_platform/servers/web && sudo npm ci --omit=dev
+sudo systemctl restart python-pvp-web
+```
+
+The web tier has no external dependencies at start (no SSM, no DB, no SQS), so
+restarts are fast and safe.
+
+### 9.5 — What's NOT included in this tier
+
+- **No auth cookies / no server-side session.** The SPA stores the session
+  token in `localStorage` and injects it as `Authorization: Bearer <token>` on
+  every API request.
+- **No CORS proxy on this tier.** Browser calls go directly to
+  `https://api.coding-master.kelvin-test.xyz`. The API's `CORS_ORIGIN` SSM
+  parameter must include the web domain (`https://coding-master.kelvin-test.xyz`).
+- **No S3 credentials.** Battle videos are fetched by the browser directly
+  from the public bucket (`https://python-pvp-store.s3.amazonaws.com/<key>`).
+
+---
+
 ## Operations
 
 | Task | Command |
 |---|---|
-| Tail logs | `journalctl -u python-pvp-api -f` |
-| Restart (also re-pulls SSM secrets) | `sudo systemctl restart python-pvp-api` |
-| Status | `sudo systemctl status python-pvp-api` |
+| Tail API logs | `journalctl -u python-pvp-api -f` |
+| Tail Web logs | `journalctl -u python-pvp-web -f` |
+| Restart API (also re-pulls SSM secrets) | `sudo systemctl restart python-pvp-api` |
+| Restart Web | `sudo systemctl restart python-pvp-web` |
+| Status | `sudo systemctl status python-pvp-api python-pvp-web` |
 | Rotate a secret | `aws ssm put-parameter --name /python_pvp/api/DB_PASSWORD --value '<new>' --type SecureString --overwrite` then restart |
-| Deploy new code | `cd /opt/python_pvp_platform && sudo git pull && cd servers/api && sudo npm ci --omit=dev && sudo systemctl restart python-pvp-api` |
+| Deploy new API | `cd /opt/python_pvp_platform && sudo git pull && cd servers/api && sudo npm ci --omit=dev && sudo systemctl restart python-pvp-api` |
+| Deploy new Web | `cd /opt/python_pvp_platform && sudo git pull && cd servers/web && sudo npm ci --omit=dev && sudo systemctl restart python-pvp-web` |
 | Renew TLS (manual) | `sudo certbot renew` |
 
 ---
@@ -365,6 +459,9 @@ A `403` here means the service account isn't seeded as `root`
 | Lambda gets `403` on `/api/internal/*` | Service account not seeded as `root`, or `SIM_API_TOKEN` mismatch between DB, SSM, and the Lambda env var. |
 | certbot fails | DNS not yet pointing at the host, or the instance role lacks `route53:ChangeResourceRecordSets`. |
 | Secrets script can't read region/account | IMDSv2-only instance; see the IMDS note in Step 6. |
+| Web frontend shows blank page | Open browser devtools → Network tab. If API calls 401/CORS-blocked, confirm `CORS_ORIGIN` SSM param includes `https://coding-master.kelvin-test.xyz` and the API was restarted. |
+| Videos won't play | S3 bucket policy must allow public GET on the `videos/*` prefix (or however the `video_reference` keys are shaped). Check the browser console for CORS/403 errors. |
+| Web tier 502 | `sudo systemctl status python-pvp-web` — process crashed or not running on 3001. |
 
 ---
 

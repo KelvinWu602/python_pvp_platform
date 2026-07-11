@@ -100,21 +100,21 @@ enqueue SQS → Lambda runs → PUT /admin/battle/:id → UPDATE battle + INSERT
 |--------|------|------------|-------------|
 | GET | /competition | — | List all competitions |
 | GET | /competition/:id | — | Get competition |
+| GET | /competition/:id/score-histogram | — | Score distribution of enrolled players + my_score |
 | DELETE | /user/session | — | Logout |
-| POST | /code | — | Create code (with initial snapshot) |
+| POST | /code | — | Create code (with initial snapshot; empty-string code allowed) |
 | PUT | /code/:code_id | checkCodeOwner | Update code (creates new snapshot) |
-| GET | /code | — | List my codes (latest code + tested status) |
-| GET | /code/:code_id | checkCodeOwner | Get code details (latest code + tested status) |
-| GET | /enroll | — | My enrollments |
-| GET | /enroll/:enroll_id | checkEnrollOwner | Get enrollment |
+| GET | /code | — | List my codes (metadata only: name, updated_at_utc, tested — no code text) |
+| GET | /code/:code_id | checkCodeOwner | Get code details (latest code text + tested status) |
+| GET | /code/:code_id/snapshot | checkCodeOwner | List snapshots (id, created_at_utc, tested, test_id) |
+| GET | /enroll | — | My enrollments (joined with competition: display_name, start/end times) |
+| GET | /enroll/:enroll_id | checkEnrollOwner | Get enrollment (joined with competition) |
 | GET | /enroll/:enroll_id/code | checkEnrollOwner | Get linked code (latest code + tested status) |
 | POST | /enroll/:enroll_id/code | checkEnrollOwner | Link/replace code |
 | DELETE | /enroll/:enroll_id/code/:code_id | checkEnrollOwner | Unlink code |
 | POST | /enroll/:enroll_id/test | checkEnrollOwner | Create test vs NPC |
 | GET | /enroll/:enroll_id/test | checkEnrollOwner | List tests for this enrollment |
-| GET | /test | — | List all my tests across competitions |
-| GET | /test/:id | — | Get specific test result |
-| POST | /enroll/:enroll_id/battle | checkEnrollOwner | Create battle vs opponent |
+| POST | /enroll/:enroll_id/battle | checkEnrollOwner | Create battle vs opponent (b_enroll_id optional — random if omitted) |
 | GET | /enroll/:enroll_id/battle | checkEnrollOwner | List battles for this enrollment |
 | GET | /battle | — | List all my battles across competitions |
 | GET | /battle/:id | — | Get battle result |
