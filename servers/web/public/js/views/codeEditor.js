@@ -86,7 +86,7 @@ export async function renderCodeEditor(codeId) {
         } = await import('@codemirror/view');
         const {
             defaultHighlightStyle, syntaxHighlighting, indentOnInput,
-            bracketMatching, foldGutter, foldKeymap,
+            bracketMatching, foldGutter, foldKeymap, indentUnit,
         } = await import('@codemirror/language');
         const {
             defaultKeymap, history, historyKeymap, indentWithTab,
@@ -107,6 +107,12 @@ export async function renderCodeEditor(codeId) {
             drawSelection(),
             dropCursor(),
             EditorState.allowMultipleSelections.of(true),
+            // 4-space indentation. `indentUnit` drives indentMore/indentLess
+            // (bound to Tab via indentWithTab below) and indentOnInput's
+            // auto-indent after `:`. `tabSize` only affects the visual width
+            // of any hard tab characters that end up in the doc.
+            indentUnit.of('    '),
+            EditorState.tabSize.of(4),
             indentOnInput(),
             // Syntax
             python(),

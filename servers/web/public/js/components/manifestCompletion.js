@@ -71,13 +71,18 @@ export function parseManifest(manifest) {
 export function makePythonCompletionSource(data) {
     if (!data) return null;
 
+    // Helper completions insert the qualified name `helper.clamp(` so they
+    // work with the boilerplate `import helper` on line 1. `label` stays as
+    // the bare name so the user's typed prefix (`cla`) still filters correctly.
+    // `displayLabel` (supported since @codemirror/autocomplete 6.11) shows the
+    // qualified name in the popup row; older builds fall back to `label`.
     const helperOptions = data.helpers.map(fn => ({
         label: fn.name,
+        displayLabel: `${data.importModule}.${fn.name}`,
         type: 'function',
         detail: fn.signature || '',
         info: fn.description || '',
-        // Insert with trailing "(" to hint at a function call.
-        apply: fn.name + '(',
+        apply: `${data.importModule}.${fn.name}(`,
         boost: 5,
     }));
 
@@ -100,8 +105,22 @@ export function makePythonCompletionSource(data) {
     // We inspect what's before the cursor.
     const memberChainRe = /([A-Za-z_][A-Za-z0-9_]*)(\.[A-Za-z_][A-Za-z0-9_]*)*\.?$/;
     const identifierRe = /[A-Za-z_][A-Za-z0-9_]*$/;
+    // Detect the user's own `def update(<name>)` so nested completion fires on
+    // whatever they named the parameter (e.g. `game_state`, `state`, `s`).
+    // Tolerates additional args after the first, and default values / type
+    // annotations are unlikely but not blocked. If no match, fall back to the
+    // convention name in the manifest (`game_states`).
+    const updateDefRe = /^\s*def\s+update\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)/m;
 
     return function pythonManifestCompletions(ctx) {
+        // Resolve the state-param name from the current doc each call. Cheap:
+        // one anchored linear regex over a small doc, and only runs when the
+        // completion source is invoked (identifier/dot triggers), not on every
+        // keystroke.
+        const docText = ctx.state.doc.toString();
+        const paramMatch = updateDefRe.exec(docText);
+        const stateParamName = paramMatch ? paramMatch[1] : data.stateParamName;
+
         // Check for member-access first (higher priority).
         const chainMatch = ctx.matchBefore(memberChainRe);
         if (chainMatch && chainMatch.text.includes('.')) {
@@ -109,11 +128,11 @@ export function makePythonCompletionSource(data) {
             const endsWithDot = raw.endsWith('.');
             const parts = raw.replace(/\.$/, '').split('.');
 
-            // For "game_states." (endsWithDot=true, parts=['game_states'])
-            if (parts[0] === data.stateParamName) {
+            // For "<param>." (endsWithDot=true, parts=['<param>'])
+            if (parts[0] === stateParamName) {
                 if (endsWithDot) {
                     if (parts.length === 1) {
-                        // "game_states." → top-level keys
+                        // "<param>." → top-level keys
                         return {
                             from: ctx.pos,
                             options: topLevelOptions,
@@ -121,7 +140,7 @@ export function makePythonCompletionSource(data) {
                         };
                     }
                     if (parts.length === 2 && nestedOptionsByKey[parts[1]]) {
-                        // "game_states.telemetry." → nested props
+                        // "<param>.telemetry." → nested props
                         return {
                             from: ctx.pos,
                             options: nestedOptionsByKey[parts[1]],
@@ -133,7 +152,7 @@ export function makePythonCompletionSource(data) {
                     const lastDot = raw.lastIndexOf('.');
                     const prefixParts = raw.slice(0, lastDot).split('.');
                     const partial = raw.slice(lastDot + 1);
-                    if (prefixParts.length === 1 && prefixParts[0] === data.stateParamName) {
+                    if (prefixParts.length === 1 && prefixParts[0] === stateParamName) {
                         return {
                             from: ctx.pos - partial.length,
                             options: topLevelOptions,
@@ -142,7 +161,7 @@ export function makePythonCompletionSource(data) {
                     }
                     if (
                         prefixParts.length === 2 &&
-                        prefixParts[0] === data.stateParamName &&
+                        prefixParts[0] === stateParamName &&
                         nestedOptionsByKey[prefixParts[1]]
                     ) {
                         return {
