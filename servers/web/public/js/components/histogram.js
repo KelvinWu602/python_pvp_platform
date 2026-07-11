@@ -1,12 +1,20 @@
-// Renders a small score histogram. `histogram` is [{score, count}, ...] sorted asc.
-// Bar height ∝ count. Highlight the bar whose score equals my_score.
-// If there are gaps in scores, fill them with 0-count bars for a continuous range.
+// Renders a small score histogram inside a rounded rectangle container.
+// `histogram` is [{score, count}, ...] sorted asc. Bar height ∝ count.
+// The bar whose score equals `my_score` gets `.mine`, which paints it in the
+// accent color with an animated "shine sweep" (see .hist-bar.mine in app.css).
+// Gaps between scores are filled with 0-count bars for a continuous x-axis.
 export function renderHistogram({ histogram, my_score }) {
+    const container = document.createElement('div');
+    container.className = 'hist-container';
+    container.innerHTML = `<div class="hist-title">分數分佈</div>`;
+
     const el = document.createElement('div');
     el.className = 'hist';
+    container.appendChild(el);
+
     if (!histogram || histogram.length === 0) {
         el.innerHTML = '<span style="color:#94a3b8;font-size:0.85rem;">尚無資料</span>';
-        return el;
+        return container;
     }
     // Fill gaps between min and max scores
     const minS = histogram[0].score;
@@ -25,5 +33,5 @@ export function renderHistogram({ histogram, my_score }) {
         bar.title = `分數 ${row.score}：${row.count} 人`;
         el.appendChild(bar);
     }
-    return el;
+    return container;
 }

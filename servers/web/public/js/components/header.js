@@ -1,7 +1,7 @@
 // Header: logo + title + username + hamburger.
 // Login page uses the login-header variant (contact-organizer link instead of username).
 import { t } from '../i18n.js';
-import { getUsername, clearAuth } from '../auth.js';
+import { getUsername, isAdmin, clearAuth } from '../auth.js';
 import { api, ORGANIZER_CONTACT } from '../api.js';
 
 export function renderHeader({ variant = 'user' } = {}) {
@@ -55,6 +55,19 @@ function toggleMenu() {
     }
     menuEl = document.createElement('div');
     menuEl.className = 'menu-dropdown';
+
+    // Admin-only entry. Visibility is UI-only convenience; the /admin/*
+    // routes remain protected by server-side authorization.
+    if (isAdmin()) {
+        const adminBtn = document.createElement('button');
+        adminBtn.textContent = t.admin;
+        adminBtn.addEventListener('click', () => {
+            closeMenu();
+            location.hash = '#/admin';
+        });
+        menuEl.appendChild(adminBtn);
+    }
+
     const logoutBtn = document.createElement('button');
     logoutBtn.textContent = t.logout;
     logoutBtn.addEventListener('click', async () => {

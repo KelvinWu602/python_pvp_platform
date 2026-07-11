@@ -1,3 +1,8 @@
+/* Default the site to what browser-zoom = 125% would look like. Every rem
+   value in this stylesheet scales up 25%. Pixel values (borders, small icons,
+   histogram bar widths) stay native — usually desirable. */
+html { font-size: 125%; }
+
 /* Design tokens from web_design.pdf */
 :root {
     --color-header: #0f2b5b;
@@ -368,14 +373,113 @@ html, body {
 }
 @keyframes spin { 0% {transform:rotate(0)} 100% {transform:rotate(360deg)} }
 
-/* ─── Histogram ─── */
-.hist { display: flex; align-items: flex-end; gap: 4px; height: 80px; justify-content: center; padding: 0 1rem; }
+/* ─── Competition view: centered summary cluster ─── */
+/* Applied to the left panel body so its content sits as a compact block in
+   the middle of the panel instead of piling up at the top. */
+.comp-body-center {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.comp-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 480px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* ─── Stat pills (win / lose / draw) with animated emojis ─── */
+.stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+}
+.stat-pill {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    background: var(--color-card-bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    transition: transform 0.15s;
+}
+.stat-pill:hover { transform: translateY(-2px); }
+.stat-win  { border-left: 4px solid var(--color-win); }
+.stat-lose { border-left: 4px solid var(--color-lose); }
+.stat-draw { border-left: 4px solid var(--color-draw); }
+.stat-emoji {
+    font-size: 1.75rem; line-height: 1;
+    display: inline-block;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.08));
+    transform-origin: center bottom;
+}
+.stat-win .stat-emoji  { animation: emoji-jiggle 3s ease-in-out infinite; }
+.stat-lose .stat-emoji { animation: emoji-shake 4s ease-in-out infinite; }
+.stat-draw .stat-emoji { animation: emoji-pulse 3s ease-in-out infinite; }
+.stat-label { font-size: 0.8rem; color: #64748b; font-weight: 600; }
+.stat-value { font-size: 1.35rem; font-weight: 800; color: var(--color-text); line-height: 1.1; }
+
+@keyframes emoji-jiggle {
+    0%, 90%, 100% { transform: rotate(0); }
+    92% { transform: rotate(-12deg); }
+    94% { transform: rotate(12deg); }
+    96% { transform: rotate(-8deg); }
+    98% { transform: rotate(6deg); }
+}
+@keyframes emoji-shake {
+    0%, 85%, 100% { transform: translateX(0); }
+    88% { transform: translateX(-2px); }
+    91% { transform: translateX(2px); }
+    94% { transform: translateX(-1px); }
+    97% { transform: translateX(1px); }
+}
+@keyframes emoji-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.12); }
+}
+
+/* ─── Histogram (score distribution) ─── */
+.hist-container {
+    background: var(--color-card-bg);
+    border-radius: 12px;
+    padding: 1rem 1rem 0.85rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.hist-title {
+    font-size: 0.8rem; color: #64748b; font-weight: 600;
+    text-align: center; margin-bottom: 0.6rem;
+}
+.hist {
+    display: flex; align-items: flex-end; gap: 4px;
+    height: 80px; justify-content: center; padding: 0;
+}
 .hist-bar {
     background: var(--color-accent-light); width: 20px; min-height: 6px;
     border-radius: 3px 3px 0 0;
     transition: background 0.2s;
+    position: relative;
+    overflow: hidden;
 }
-.hist-bar.mine { background: var(--color-accent); }
+/* The current user's bar: solid accent color with a diagonal "shine" band
+   that sweeps across every 2.4s, plus a soft orange glow. Feels metallic. */
+.hist-bar.mine {
+    background:
+        linear-gradient(105deg,
+            transparent 30%,
+            rgba(255,255,255,0.7) 45%,
+            rgba(255,255,255,0.95) 50%,
+            rgba(255,255,255,0.7) 55%,
+            transparent 70%
+        ) 200% 0 / 200% 100% no-repeat,
+        var(--color-accent);
+    animation: hist-shine 2.4s ease-in-out infinite;
+    box-shadow: 0 0 8px rgba(243, 145, 48, 0.45);
+}
+@keyframes hist-shine {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -100% 0; }
+}
 
 /* ─── Hamburger menu dropdown ─── */
 .menu-dropdown {
@@ -446,6 +550,146 @@ html, body {
 .login-form h1 {
     text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem;
 }
+
+/* ─── Admin view ─── */
+.admin-section-list {
+    display: flex; flex-direction: column; gap: 0.5rem;
+}
+.admin-section-btn {
+    display: block; width: 100%; text-align: left;
+    background: var(--color-card-bg);
+    border: 1px solid transparent;
+    padding: 0.85rem 1rem;
+    border-radius: 10px;
+    font-size: 1rem; font-weight: 500;
+    color: var(--color-text); cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+.admin-section-btn:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.08); }
+.admin-section-btn.active {
+    background: var(--color-card-bg);
+    box-shadow: 0 0 0 2px var(--color-accent), 0 1px 2px rgba(0,0,0,0.04);
+    color: var(--color-accent);
+    font-weight: 700;
+}
+
+.admin-form {
+    display: flex; flex-direction: column;
+    gap: 0.9rem;
+    max-width: 560px;
+}
+.admin-field {
+    display: flex; flex-direction: column; gap: 0.35rem;
+}
+.admin-field > span {
+    font-size: 0.85rem; color: #64748b; font-weight: 600;
+}
+.admin-input {
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #cbd5e0; border-radius: 8px;
+    background: white;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+.admin-input:focus { outline: none; border-color: var(--color-accent); }
+.admin-textarea {
+    min-height: 4.5rem; resize: vertical;
+    font-family: 'Noto Sans TC', sans-serif;
+}
+.admin-readonly {
+    padding: 0.35rem 0;
+    font-size: 0.95rem;
+}
+.admin-actions {
+    display: flex; justify-content: flex-end; gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+.admin-selected {
+    display: flex; align-items: center; gap: 0.5rem;
+    min-height: 1.5rem;
+}
+.admin-picker-wrap { margin-bottom: 1rem; }
+.admin-subtitle {
+    font-size: 1.05rem; font-weight: 700; margin-bottom: 0.75rem;
+    color: var(--color-text);
+}
+.admin-add-user {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+.admin-add-user > span { font-size: 0.85rem; color: #64748b; }
+.admin-add-user > div { flex: 1; }
+.admin-enroll-list {
+    display: flex; flex-direction: column; gap: 0.5rem;
+}
+.admin-enroll-row {
+    display: grid;
+    grid-template-columns: 2fr 1.5fr 1fr auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--color-card-bg);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.admin-enroll-user {
+    display: flex; flex-direction: column; gap: 0.15rem;
+    font-size: 0.9rem;
+}
+.admin-enroll-stats {
+    font-size: 0.85rem; color: #64748b;
+}
+.admin-enroll-status {
+    display: flex; justify-content: center;
+}
+
+/* ─── Search picker (input + dropdown of matching results) ─── */
+.search-picker {
+    position: relative; width: 100%;
+}
+.search-input {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #cbd5e0; border-radius: 8px;
+    background: white;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+.search-input:focus { outline: none; border-color: var(--color-accent); }
+.search-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: white;
+    border: 1px solid #cbd5e0; border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    max-height: 240px; overflow-y: auto;
+    z-index: 60;
+}
+.search-row {
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    border-bottom: 1px solid #f1f5f9;
+}
+.search-row:last-child { border-bottom: none; }
+.search-row:hover { background: #f8fafc; }
+.search-hint {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.85rem;
+    color: #94a3b8;
+    text-align: center;
+}
+
+/* Inline text-style button used inside admin rows */
+.link-btn {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--color-header);
+    font-size: 0.85rem;
+    padding: 0.2rem 0.5rem; border-radius: 4px;
+}
+.link-btn:hover { background: rgba(15, 43, 91, 0.08); }
+.link-btn.danger { color: var(--color-lose); }
+.link-btn.danger:hover { background: rgba(230, 57, 70, 0.08); }
 
 /* ─── Utility ─── */
 .hidden-el { display: none !important; }

@@ -58,6 +58,14 @@ paths:
                     type: string
                     format: uuid
                     example: "a1b2c3d4-..."
+                  urole:
+                    type: string
+                    enum: [user, root]
+                    description: |
+                      User role. Returned so the frontend can conditionally
+                      show admin-only UI (the header 管理員 menu entry and
+                      the /admin route). Server-side authorization is still
+                      the source of truth.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -717,6 +725,32 @@ paths:
   # ── Admin (mounted at /admin) ───────────────────────────────────────────
 
   /admin/user:
+    get:
+      operationId: adminListUsers
+      summary: Search users by username or full name (case-insensitive substring)
+      description: |
+        Requires `q` >= 2 characters; shorter queries return an empty list to
+        keep the UI dropdown predictable. Capped at 50 rows.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: adminCreateUser
       summary: Create a new user
@@ -753,7 +787,97 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /admin/user/{id}:
+    get:
+      operationId: adminGetUser
+      summary: Get one user by id
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: adminUpdateUser
+      summary: Update a user (partial)
+      description: |
+        Partial update. Accepts `full_name` and/or `password`. Username and
+        urole are not updatable through this endpoint.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /admin/competition:
+    get:
+      operationId: adminListCompetitions
+      summary: Search competitions by display_name (case-insensitive substring)
+      description: |
+        Requires `q` >= 2 characters; shorter queries return an empty list.
+        Capped at 50 rows.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: List of competitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Competition'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: adminCreateCompetition
       summary: Create a new competition
@@ -813,6 +937,115 @@ paths:
                 $ref: '#/components/schemas/Competition'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/competition/{id}:
+    get:
+      operationId: adminGetCompetition
+      summary: Get one competition by id
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Competition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competition'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: adminUpdateCompetition
+      summary: Update a competition (partial)
+      description: |
+        Partial update. Whitelisted fields: display_name, description,
+        start_time_utc, end_time_utc, game_reference, helper_reference,
+        manifest_reference. `npc_user_id` is intentionally NOT updatable —
+        changing NPC would invalidate previously-tested NPC snapshots and
+        every past battle referencing them.
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                description: { type: string }
+                start_time_utc: { type: string, format: date-time }
+                end_time_utc: { type: string, format: date-time }
+                game_reference: { type: string }
+                helper_reference: { type: string }
+                manifest_reference: { type: string }
+      responses:
+        '200':
+          description: Updated competition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Competition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/competition/{id}/enroll:
+    get:
+      operationId: adminListCompetitionEnrolls
+      summary: List all enrollments for a competition (admin view)
+      description: |
+        For each enrolled user returns win/lose/tie counts, whether they have
+        a linked code, and whether that code has been tested (i.e. has a
+        successful test battle for any of its snapshots).
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Enrollment list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    enroll_id: { type: string, format: uuid }
+                    user_id: { type: string, format: uuid }
+                    username: { type: string }
+                    full_name: { type: string }
+                    win_count: { type: integer }
+                    lose_count: { type: integer }
+                    tie_count: { type: integer }
+                    has_code: { type: boolean }
+                    code_tested: { type: boolean }
         '500':
           $ref: '#/components/responses/InternalError'
 

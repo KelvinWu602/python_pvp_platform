@@ -35,6 +35,93 @@ router.post('/user', async (req, res) => {
     }
 });
 
+// GET /user?q=<term> - Search users by username OR full_name (case-insensitive
+// substring). Requires q.length >= 2; shorter queries return an empty list to
+// keep the dropdown UI predictable. Capped at 50 rows.
+router.get('/user', async (req, res) => {
+    try {
+        const q = (req.query.q || '').trim();
+        if (q.length < 2) {
+            return res.status(200).json([]);
+        }
+        const result = await pool.query(
+            `SELECT id, username, full_name, urole
+             FROM app.user
+             WHERE username ILIKE '%' || $1 || '%'
+                OR full_name ILIKE '%' || $1 || '%'
+             ORDER BY username
+             LIMIT 50;`,
+            [q]
+        );
+        return res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// GET /user/:id - Get one user by id (used to reload state after edits).
+router.get('/user/:id', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, username, full_name, urole
+             FROM app.user WHERE id = $1;`,
+            [req.params.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        return res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// PUT /user/:id - Partial update. Accepts { full_name?, password? }. Username
+// and urole are intentionally NOT updatable through this endpoint (username is
+// an identity, urole promotion is a rare op that shouldn't be a form field).
+router.put('/user/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { full_name, password } = req.body;
+        if (full_name === undefined && password === undefined) {
+            return res.status(400).json({ error: 'nothing to update' });
+        }
+
+        const sets = [];
+        const params = [];
+        if (full_name !== undefined) {
+            if (typeof full_name !== 'string' || !full_name.trim()) {
+                return res.status(400).json({ error: 'full_name must be a non-empty string' });
+            }
+            params.push(full_name.trim());
+            sets.push(`full_name = $${params.length}`);
+        }
+        if (password !== undefined) {
+            if (typeof password !== 'string' || password.length < 1) {
+                return res.status(400).json({ error: 'password must be a non-empty string' });
+            }
+            params.push(bcrypt.hashSync(password));
+            sets.push(`hash_password = $${params.length}`);
+        }
+        params.push(id);
+        const result = await pool.query(
+            `UPDATE app.user SET ${sets.join(', ')}
+             WHERE id = $${params.length}
+             RETURNING id, username, full_name, urole;`,
+            params
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        return res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
 // POST /competition - Create competition with NPC code + admin enrollment
 router.post('/competition', async (req, res) => {
     try {
@@ -55,6 +142,127 @@ router.post('/competition', async (req, res) => {
         );
         const competition_id = compResult.rows[0].id;
         return res.status(201).json(compResult.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// GET /competition?q=<term> - Search competitions by display_name
+// (case-insensitive substring). Requires q.length >= 2. Capped at 50.
+router.get('/competition', async (req, res) => {
+    try {
+        const q = (req.query.q || '').trim();
+        if (q.length < 2) {
+            return res.status(200).json([]);
+        }
+        const result = await pool.query(
+            `SELECT id, npc_user_id, display_name, description,
+                    start_time_utc, end_time_utc,
+                    game_reference, helper_reference, manifest_reference
+             FROM app.competition
+             WHERE display_name ILIKE '%' || $1 || '%'
+             ORDER BY start_time_utc DESC
+             LIMIT 50;`,
+            [q]
+        );
+        return res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// GET /competition/:id - Get one competition (used to reload edit form).
+router.get('/competition/:id', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, npc_user_id, display_name, description,
+                    start_time_utc, end_time_utc,
+                    game_reference, helper_reference, manifest_reference
+             FROM app.competition WHERE id = $1;`,
+            [req.params.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Competition not found' });
+        }
+        return res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// PUT /competition/:id - Partial update. Accepts the whitelist below.
+// Intentionally does NOT allow changing npc_user_id: that would invalidate
+// previously-tested NPC snapshots and every past battle referencing them.
+router.put('/competition/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const allowed = [
+            'display_name', 'description',
+            'start_time_utc', 'end_time_utc',
+            'game_reference', 'helper_reference', 'manifest_reference',
+        ];
+        const sets = [];
+        const params = [];
+        for (const field of allowed) {
+            if (req.body[field] !== undefined) {
+                params.push(req.body[field]);
+                sets.push(`${field} = $${params.length}`);
+            }
+        }
+        if (sets.length === 0) {
+            return res.status(400).json({ error: 'nothing to update' });
+        }
+        params.push(id);
+        const result = await pool.query(
+            `UPDATE app.competition SET ${sets.join(', ')}
+             WHERE id = $${params.length}
+             RETURNING id, npc_user_id, display_name, description,
+                       start_time_utc, end_time_utc,
+                       game_reference, helper_reference, manifest_reference;`,
+            params
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Competition not found' });
+        }
+        return res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'API error' });
+    }
+});
+
+// GET /competition/:id/enroll - List all enrollments for a competition
+// (admin view). Includes each enrolled user's display info, win/lose/tie
+// counts, and whether they have a linked code that has been tested.
+router.get('/competition/:id/enroll', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.query(
+            `SELECT
+               e.id           AS enroll_id,
+               e.user_id,
+               u.username,
+               u.full_name,
+               e.win_count, e.lose_count, e.tie_count,
+               cs.code_id IS NOT NULL AS has_code,
+               EXISTS (
+                   SELECT 1
+                   FROM app.snapshot s
+                   JOIN app.battle b ON (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
+                   WHERE s.code_id = cs.code_id
+                     AND b.infra_ok = true AND b.input_ok = true
+               ) AS code_tested
+             FROM app.enroll e
+             JOIN app.user u ON u.id = e.user_id
+             LEFT JOIN app.code_select cs ON cs.enroll_id = e.id
+             WHERE e.competition_id = $1
+             ORDER BY u.username;`,
+            [id]
+        );
+        return res.status(200).json(result.rows);
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'API error' });

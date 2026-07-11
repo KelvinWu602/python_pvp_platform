@@ -89,6 +89,27 @@ export const api = {
         request('POST', `/enroll/${eid}/battle`, b_enroll_id ? { b_enroll_id } : {}),
     listBattles: (eid) => request('GET', `/enroll/${eid}/battle`),
     getBattle: (id) => request('GET', `/battle/${id}`),
+
+    // ── Admin (root-only). All routes below hit /admin/* and require
+    // urole='root'; the server returns 403 for non-root callers.
+    adminListUsers: (q) => request('GET', `/admin/user?q=${encodeURIComponent(q)}`),
+    adminGetUser: (id) => request('GET', `/admin/user/${id}`),
+    adminCreateUser: ({ username, full_name, password }) =>
+        request('POST', '/admin/user', { username, full_name, password }),
+    adminUpdateUser: (id, payload) => request('PUT', `/admin/user/${id}`, payload),
+
+    adminListCompetitions: (q) => request('GET', `/admin/competition?q=${encodeURIComponent(q)}`),
+    adminGetCompetition: (id) => request('GET', `/admin/competition/${id}`),
+    adminCreateCompetition: (payload) => request('POST', '/admin/competition', payload),
+    adminUpdateCompetition: (id, payload) => request('PUT', `/admin/competition/${id}`, payload),
+    adminListCompetitionEnrolls: (id) => request('GET', `/admin/competition/${id}/enroll`),
+
+    adminCreateEnroll: (competition_id, user_id) =>
+        request('POST', '/admin/enroll', { competition_id, user_id }),
+    adminDeleteEnroll: (enroll_id) => request('DELETE', `/admin/enroll/${enroll_id}`),
+
+    adminApproveCode: (competition_id, user_id) =>
+        request('POST', '/admin/approve-code', { competition_id, user_id }),
 };
 
 export function videoUrl(videoReference) {

@@ -21,7 +21,7 @@ export async function renderCompetition(enrollId) {
             </div>
         </div>
         <div class="pvp-panel">
-            <div class="pvp-panel-header">${t.yourCode}</div>
+            <div class="pvp-panel-header">${t.battleCode}</div>
             <div class="pvp-panel-body" data-code-body>
                 <div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>
             </div>
@@ -62,43 +62,61 @@ export async function renderCompetition(enrollId) {
 
     function renderCompBody() {
         compBody.innerHTML = '';
+        // Vertically center the summary cluster so we don't have a big empty
+        // chunk at the bottom of the panel.
+        compBody.classList.add('comp-body-center');
 
-        const scoreRow = document.createElement('div');
-        scoreRow.style.display = 'flex';
-        scoreRow.style.justifyContent = 'space-around';
-        scoreRow.style.padding = '1rem 0 1.5rem';
-        scoreRow.style.fontSize = '1.15rem';
-        scoreRow.innerHTML = `
-            <div><span style="color:#64748b;">${t.win_short}：</span><strong>${enroll.win_count}</strong></div>
-            <div><span style="color:#64748b;">${t.lose_short}：</span><strong>${enroll.lose_count}</strong></div>
-            <div><span style="color:#64748b;">${t.tie_short}：</span><strong>${enroll.tie_count}</strong></div>
+        const wrap = document.createElement('div');
+        wrap.className = 'comp-summary';
+        compBody.appendChild(wrap);
+
+        // ── Stats pills (win / lose / draw) with animated emojis ──────────
+        const stats = document.createElement('div');
+        stats.className = 'stats-row';
+        stats.innerHTML = `
+            <div class="stat-pill stat-win">
+                <span class="stat-emoji">🏆</span>
+                <div>
+                    <div class="stat-label">${t.win_short}</div>
+                    <div class="stat-value">${enroll.win_count}</div>
+                </div>
+            </div>
+            <div class="stat-pill stat-lose">
+                <span class="stat-emoji">😢</span>
+                <div>
+                    <div class="stat-label">${t.lose_short}</div>
+                    <div class="stat-value">${enroll.lose_count}</div>
+                </div>
+            </div>
+            <div class="stat-pill stat-draw">
+                <span class="stat-emoji">🤝</span>
+                <div>
+                    <div class="stat-label">${t.tie_short}</div>
+                    <div class="stat-value">${enroll.tie_count}</div>
+                </div>
+            </div>
         `;
-        compBody.appendChild(scoreRow);
+        wrap.appendChild(stats);
 
-        // Histogram
-        const histWrap = document.createElement('div');
-        histWrap.style.margin = '1rem 0';
-        histWrap.appendChild(renderHistogram(hist));
-        compBody.appendChild(histWrap);
+        // ── Histogram (returns its own rounded container) ─────────────────
+        wrap.appendChild(renderHistogram(hist));
 
-        // Countdown
+        // ── Countdown ─────────────────────────────────────────────────────
         const countdown = document.createElement('div');
         countdown.className = 'countdown';
         countdown.style.textAlign = 'center';
-        countdown.style.margin = '1rem 0';
         countdown.style.fontSize = '1.05rem';
-        compBody.appendChild(countdown);
+        wrap.appendChild(countdown);
 
-        // Battle button
+        // ── Battle button ─────────────────────────────────────────────────
         const btnWrap = document.createElement('div');
         btnWrap.style.textAlign = 'center';
-        btnWrap.style.marginTop = '1.5rem';
         const btn = document.createElement('button');
         btn.className = 'battle-btn';
         btn.textContent = t.battle;
         btn.addEventListener('click', onBattle);
         btnWrap.appendChild(btn);
-        compBody.appendChild(btnWrap);
+        wrap.appendChild(btnWrap);
 
         updateCountdown();
     }

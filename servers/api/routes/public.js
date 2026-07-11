@@ -35,7 +35,10 @@ router.post('/user/session', async (req, res) => {
             [sessionId, user.id, expiresAt]
         );
 
-        return res.status(200).json({ auth_token: sessionId });
+        // Return urole so the frontend can conditionally show admin-only UI
+        // (the header's 管理員 menu entry, the /admin route). The API remains
+        // the source of truth for authorization — this is UI-only signal.
+        return res.status(200).json({ auth_token: sessionId, urole: user.urole });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'API error' });

@@ -7,6 +7,7 @@ import { renderCodeEditor } from './views/codeEditor.js';
 import { renderTestResult } from './views/testResult.js';
 import { renderBattleResult } from './views/battleResult.js';
 import { renderExpired } from './views/expired.js';
+import { renderAdmin } from './views/admin.js';
 
 const routes = [
     { pattern: /^#?\/?$/,                            handler: () => defaultRoute() },
@@ -17,6 +18,7 @@ const routes = [
     { pattern: /^#\/code\/([^/]+)$/,                 handler: (m) => renderCodeEditor(m[1]), auth: true },
     { pattern: /^#\/test\/([^/]+)$/,                 handler: (m) => renderTestResult(m[1]), auth: true },
     { pattern: /^#\/battle\/([^/]+)$/,               handler: (m) => renderBattleResult(m[1]), auth: true },
+    { pattern: /^#\/admin$/,                         handler: renderAdmin, auth: true },
 ];
 
 function defaultRoute() {
