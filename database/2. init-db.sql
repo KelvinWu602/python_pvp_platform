@@ -23,6 +23,7 @@ CREATE TABLE app.user_session (
 CREATE TABLE app.code (
     id uuid PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES app.user(id),
+    competition_id uuid NOT NULL REFERENCES app.competition(id),
     name varchar(50) NOT NULL,
     created_at_utc timestamp NOT NULL DEFAULT now()
 );

@@ -15,7 +15,7 @@ Python PvP Coding Platform — users write Python code to compete in games. Each
 
 **app.enroll** — id, competition_id→competition, user_id→user, win_count, lose_count, tie_count, UNIQUE(competition_id, user_id)
 
-**app.code** — id, user_id→user, name, created_at_utc — code belongs to user, not enrollment
+**app.code** — id, user_id→user, competition_id→competition, name, created_at_utc — code belongs to user, not enrollment
 
 **app.snapshot** — id, code_id→code, code(text), created_at_utc
 

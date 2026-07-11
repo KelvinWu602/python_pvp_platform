@@ -58,25 +58,23 @@ router.get('/competition/:id', async (req, res) => {
 router.post('/code', async (req, res) => {
     let client;
     try {
-        const { name, code } = req.body;
-        if (!name) {
-            return res.status(400).json({ error: 'missing name' });
+        const { name, code, competition_id } = req.body;
+        if (!name || !code || !competition_id) {
+            return res.status(400).json({ error: 'missing name, code or competition_id' });
         }
         client = await pool.connect();
         await client.query('BEGIN;');
         const codeResult = await client.query(
-            `INSERT INTO app.code (user_id, name) VALUES ($1, $2) RETURNING *;`,
-            [req.user.user_id, name]
+            `INSERT INTO app.code (user_id, name, competition_id) VALUES ($1, $2, $3) RETURNING *;`,
+            [req.user.user_id, name, competition_id]
         );
         const newCode = codeResult.rows[0];
-        if (code) {
-            await client.query(
-                `INSERT INTO app.snapshot (code_id, code) VALUES ($1, $2);`,
-                [newCode.id, code]
-            );
-        }
+        await client.query(
+            `INSERT INTO app.snapshot (code_id, code) VALUES ($1, $2);`,
+            [newCode.id, code]
+        );
         await client.query('COMMIT;');
-        return res.status(201).json({ id: newCode.id, name: newCode.name, created_at_utc: newCode.created_at_utc });
+        return res.status(201).json({ id: newCode.id, name: newCode.name, competition_id: newCode. competition_id, created_at_utc: newCode.created_at_utc });
     } catch (err) {
         if (client) await client.query('ROLLBACK;').catch(() => {});
         console.error(err);
@@ -109,7 +107,7 @@ router.put('/code/:code_id', checkCodeOwner, async (req, res) => {
 router.get('/code', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT c.id, c.name, c.created_at_utc,
+            `SELECT c.id, c.name, c.competition_id, c.created_at_utc,
                     s.code AS code,
                     EXISTS (
                       SELECT 1 FROM app.battle b
@@ -135,7 +133,7 @@ router.get('/code/:code_id', checkCodeOwner, async (req, res) => {
     try {
         const { code_id } = req.params;
         const result = await pool.query(
-            `SELECT c.id, c.name, c.created_at_utc,
+            `SELECT c.id, c.name, c.competition_id, c.created_at_utc,
                     s.code,
                     EXISTS (
                       SELECT 1 FROM app.battle b
@@ -193,7 +191,7 @@ router.get('/enroll/:enroll_id/code', checkEnrollOwner, async (req, res) => {
     try {
         const { enroll_id } = req.params;
         const result = await pool.query(
-            `SELECT c.id, c.name, c.created_at_utc,
+            `SELECT c.id, c.name, c.competition_id, c.created_at_utc,
                     s.code,
                     EXISTS (
                       SELECT 1 FROM app.battle b
@@ -226,18 +224,24 @@ router.post('/enroll/:enroll_id/code', checkEnrollOwner, async (req, res) => {
         }
 
         const codeResult = await pool.query(
-            `SELECT id FROM app.code WHERE id = $1 AND user_id = $2;`,
+            `SELECT id, competition_id FROM app.code WHERE id = $1 AND user_id = $2;`,
             [code_id, req.user.user_id]
         );
         if (codeResult.rows.length === 0) {
             return res.status(400).json({ error: 'code not found or not owned by you' });
         }
+        const code_competition_id = codeResult.rows[0].competition_id;
 
         const enrollResult = await pool.query(
             `SELECT competition_id FROM app.enroll WHERE id = $1;`,
             [enroll_id]
         );
-        const competition_id = enrollResult.rows[0].competition_id;
+        const enroll_competition_id = enrollResult.rows[0].competition_id;
+
+        if (code_competition_id !== enroll_competition_id) {
+            return res.status(400).json({ error: 'code competition does not match enrollment competition' });
+        }
+        const competition_id = enroll_competition_id;
 
         const client = await pool.connect();
         try {
