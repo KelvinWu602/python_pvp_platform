@@ -81,7 +81,7 @@ export const api = {
     linkCode: (eid, code_id) => request('POST', `/enroll/${eid}/code`, { code_id }),
     unlinkCode: (eid, cid) => request('DELETE', `/enroll/${eid}/code/${cid}`),
 
-    createTest: (eid) => request('POST', `/enroll/${eid}/test`),
+    createTest: (eid, code_id) => request('POST', `/enroll/${eid}/test`, { code_id }),
     listTests: (eid) => request('GET', `/enroll/${eid}/test`),
     getTest: (id) => request('GET', `/test/${id}?log=true&error=true`),
 

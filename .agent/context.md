@@ -78,7 +78,7 @@ POST /admin/approve-code { user_id, competition_id }
 ```
 
 ### Create battle
-- **Test vs NPC**: POST /enroll/:eid/test (auto-selects NPC from competition)
+- **Test vs NPC**: POST /enroll/:eid/test with `{ code_id }` — tests the latest snapshot of that code against the NPC's latest tested snapshot. The code must be owned by the caller and belong to the enrollment's competition, but need not be the currently linked (`code_select`) code — so a user can test any of their codes from its detail page.
 - **User battle**: POST /enroll/:eid/battle with { b_enroll_id }
 
 ```
@@ -112,7 +112,7 @@ enqueue SQS → Lambda runs → PUT /admin/battle/:id → UPDATE battle + INSERT
 | GET | /enroll/:enroll_id/code | checkEnrollOwner | Get linked code (latest code + tested status) |
 | POST | /enroll/:enroll_id/code | checkEnrollOwner | Link/replace code |
 | DELETE | /enroll/:enroll_id/code/:code_id | checkEnrollOwner | Unlink code |
-| POST | /enroll/:enroll_id/test | checkEnrollOwner | Create test vs NPC |
+| POST | /enroll/:enroll_id/test | checkEnrollOwner | Create test vs NPC for a specified code (body: `{ code_id }`; code must be owned by caller and belong to the enrollment's competition; need not be the currently linked code) |
 | GET | /enroll/:enroll_id/test | checkEnrollOwner | List tests for this enrollment |
 | POST | /enroll/:enroll_id/battle | checkEnrollOwner | Create battle vs opponent (b_enroll_id optional — random if omitted) |
 | GET | /enroll/:enroll_id/battle | checkEnrollOwner | List battles for this enrollment |

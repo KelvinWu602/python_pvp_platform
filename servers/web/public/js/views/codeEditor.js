@@ -326,7 +326,7 @@ export async function renderCodeEditor(codeId) {
                     testBtn.disabled = true;
                     testBtn.textContent = '...';
                     try {
-                        const res = await api.createTest(enrollForCompetition.id);
+                        const res = await api.createTest(enrollForCompetition.id, codeId);
                         location.hash = `#/test/${res.id}`;
                     } catch (err) {
                         // 409 = server-side race we lost (someone else just

@@ -483,15 +483,23 @@ paths:
   /enroll/{enroll_id}/test:
     post:
       operationId: createTest
-      summary: Create a test battle vs the competition NPC
+      summary: Create a test battle vs the competition NPC for a specified code
       description: |
-        Uses the user's latest snapshot and the NPC's latest *tested* snapshot.
-        The Lambda processes the battle asynchronously.
+        Tests the latest snapshot of the specified code against the competition
+        NPC's latest tested snapshot. The Lambda processes the battle
+        asynchronously.
 
-        Rejects with 409 Conflict if the user's latest snapshot has already been
-        tested (success or user_error) or is currently being tested (pending).
-        Only a prior infra_error leaves the snapshot retestable — see the
-        `retestable` field on SnapshotSummary.
+        The `code_id` in the body must belong to the caller and be for the same
+        competition as the enrollment. The code does NOT need to be the code
+        currently linked to the enrollment (via `POST /enroll/:eid/code`) —
+        any code owned by the user for that competition can be tested. This
+        allows a user viewing the detail page of a non-selected code to still
+        launch a test for it.
+
+        Rejects with 409 Conflict if the code's latest snapshot has already
+        been tested (success or user_error) or is currently being tested
+        (pending). Only a prior infra_error leaves the snapshot retestable —
+        see the `retestable` field on SnapshotSummary.
       tags: [User, Test]
       security: [{ BearerAuth: [] }]
       parameters:
@@ -501,6 +509,20 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code_id]
+              properties:
+                code_id:
+                  type: string
+                  format: uuid
+                  description: |
+                    ID of the code to test. Must be owned by the caller and
+                    belong to the same competition as the enrollment.
       responses:
         '201':
           description: Test battle created
@@ -514,7 +536,18 @@ paths:
                     format: uuid
                     description: Battle ID
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: |
+            One of: missing `code_id`; code not owned by caller; code belongs
+            to a different competition than the enrollment; code has no
+            snapshot; NPC not enrolled in this competition; NPC code not
+            tested yet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':

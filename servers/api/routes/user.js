@@ -424,11 +424,23 @@ router.delete('/enroll/:enroll_id/code/:code_id', checkEnrollOwner, async (req, 
 
 // ─── Test endpoints (is_test = true) ──────────────────────────
 
-// POST /enroll/:eid/test - Create test vs NPC
+// POST /enroll/:eid/test - Create test vs NPC for a specified code
+//
+// Body: { code_id }
+// The code must belong to the caller and be for the same competition as the
+// enrollment. The code does NOT need to be the currently-linked (code_select)
+// code for the enrollment — any code owned by the user for that competition
+// can be tested. This lets users test a code from its detail page even when
+// a different code is linked as their competition entry.
 router.post('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
     try {
         const user_id = req.user.user_id;
         const enroll_id = req.params.enroll_id;
+        const { code_id } = req.body;
+
+        if (!code_id) {
+            return res.status(400).json({ error: 'missing code_id' });
+        }
 
         const enrollResult = await pool.query(
             `SELECT e.competition_id, c.npc_user_id
@@ -439,15 +451,26 @@ router.post('/enroll/:enroll_id/test', checkEnrollOwner, async (req, res) => {
         );
         const { competition_id, npc_user_id } = enrollResult.rows[0];
 
+        // Verify the code belongs to the caller and matches the enrollment's
+        // competition. A single query covers both "not owned" and "wrong
+        // competition" cases — both fall through to the same 400.
+        const codeResult = await pool.query(
+            `SELECT id FROM app.code
+             WHERE id = $1 AND user_id = $2 AND competition_id = $3;`,
+            [code_id, user_id, competition_id]
+        );
+        if (codeResult.rows.length === 0) {
+            return res.status(400).json({ error: 'code not found, not owned by you, or wrong competition' });
+        }
+
         const snapResult = await pool.query(
-            `SELECT s.id FROM app.snapshot s
-             JOIN app.code_select cs ON cs.code_id = s.code_id
-             WHERE cs.enroll_id = $1
-             ORDER BY s.created_at_utc DESC LIMIT 1;`,
-            [enroll_id]
+            `SELECT id FROM app.snapshot
+             WHERE code_id = $1
+             ORDER BY created_at_utc DESC LIMIT 1;`,
+            [code_id]
         );
         if (snapResult.rows.length === 0) {
-            return res.status(400).json({ error: 'No code linked to this enrollment' });
+            return res.status(400).json({ error: 'code has no snapshot' });
         }
         const a_snapshot_id = snapResult.rows[0].id;
 
