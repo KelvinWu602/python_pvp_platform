@@ -143,7 +143,24 @@ html, body {
 }
 .pvp-card-title { font-size: 1.1rem; font-weight: 500; margin-bottom: 0.25rem; }
 .pvp-card-sub { font-size: 0.85rem; color: #64748b; }
-.pvp-card-arrow { color: var(--color-accent); font-size: 1.5rem; }
+/* Orange arrow on the right side of a card. Mirrors the header .back-btn
+   hover treatment (translucent tinted background) so users get feedback
+   that this glyph is a distinct click target, separate from the card body
+   which selects. Padding + border-radius create the hit area; using
+   `background: transparent` at rest keeps the visual identical to before. */
+.pvp-card-arrow {
+    color: var(--color-accent);
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: transparent;
+    transition: background 0.15s, transform 0.1s;
+}
+.pvp-card-arrow:hover {
+    background: rgba(243, 145, 48, 0.15);
+    transform: translateX(2px);
+}
 
 /* ─── Add-tile ─── */
 .pvp-add-tile {
