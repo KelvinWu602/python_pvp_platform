@@ -160,10 +160,6 @@ html, body {
 }
 .pvp-add-tile:hover { background: #f4c58a; }
 
-/* ─── Star ─── */
-.star { color: var(--color-star); font-size: 1.5rem; }
-.star-empty { color: var(--color-star-empty); font-size: 1.5rem; }
-
 /* ─── Battle button ─── */
 .battle-btn {
     background: var(--color-accent);

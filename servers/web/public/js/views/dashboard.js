@@ -116,19 +116,22 @@ export async function renderDashboard() {
         for (const c of scoped) {
             const card = document.createElement('div');
             card.className = 'pvp-card';
+            const isSelected = c.id === selectedCodeId;
+            if (isSelected) card.classList.add('selected');
             const updated = c.updated_at_utc ? `${t.lastUpdated}：${fmtDateTime(c.updated_at_utc)}` : '';
-            const isStarred = c.id === selectedCodeId;
+            // Unified UX with the enrollment cards on the left panel:
+            //   - card body click → selects this code as the enrollment's code
+            //     (orange ring via `.pvp-card.selected` marks the current pick)
+            //   - orange arrow (➜) → navigates to the code editor
             card.innerHTML = `
                 <div style="flex:1;">
                     <div class="pvp-card-title">${escapeHtml(c.name)}</div>
                     <div class="pvp-card-sub">${updated}</div>
                 </div>
-                <div class="${isStarred ? 'star' : 'star-empty'}" title="${isStarred ? '目前選定' : '選定為比賽代碼'}">★</div>
+                <div class="pvp-card-arrow" title="${t.editCode}">➜</div>
             `;
-            const star = card.querySelector('.star, .star-empty');
-            star.addEventListener('click', async (ev) => {
-                ev.stopPropagation();
-                if (isStarred) return; // already selected
+            card.addEventListener('click', async () => {
+                if (c.id === selectedCodeId) return; // already selected → no-op
                 try {
                     await api.linkCode(selectedEnroll.id, c.id);
                     selectedCodeId = c.id;
@@ -138,7 +141,8 @@ export async function renderDashboard() {
                     toast(err.body?.error || t.generalError, 'error');
                 }
             });
-            card.addEventListener('click', () => {
+            card.querySelector('.pvp-card-arrow').addEventListener('click', (ev) => {
+                ev.stopPropagation();
                 location.hash = `#/code/${c.id}`;
             });
             codeBody.appendChild(card);
