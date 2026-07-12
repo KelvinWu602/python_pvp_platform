@@ -23,11 +23,13 @@ def main():
     namespace = {}
     try:
         exec(payload['user_code'], namespace)
-    except SyntaxError:
-        ipc_out.write(json.dumps({'ok': False, 'error': 'user provided code has syntax error'}) + '\n')
+    except SyntaxError as e:
+        print(f'SyntaxError: {str(e)}', file=sys.stderr)
+        ipc_out.write(json.dumps({'ok': False, 'error': f'user provided code has syntax error: {str(e)}'}) + '\n')
         ipc_out.flush()
         return
     except Exception as e:
+        print(f'Exception: {str(e)}', file=sys.stderr)
         ipc_out.write(json.dumps({'ok': False, 'error': f'exec error: {e}'}) + '\n')
         ipc_out.flush()
         return
@@ -37,6 +39,7 @@ def main():
     # If the user forgot to define update(), tell the parent immediately
     # and exit. The parent will raise UserCodeError.
     if not update_func:
+        print(f'Exception: update() function not found', file=sys.stderr)
         ipc_out.write(json.dumps({'ok': False, 'error': 'update() function not found'}) + '\n')
         ipc_out.flush()
         return
@@ -75,6 +78,7 @@ def main():
                 'controls': result,
             }) + '\n')
         except Exception as e:
+            print(f'Exception: {str(e)}', file=sys.stderr)
             ipc_out.write(json.dumps({'ok': False, 'error': str(e)}) + '\n')
         # Flush every frame so the parent receives the response immediately.
         # Without flush(), output buffers and the parent's select() would
