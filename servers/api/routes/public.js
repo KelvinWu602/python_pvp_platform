@@ -5,8 +5,11 @@ const pool = require('../utils/db');
 
 const router = express.Router();
 
-// POST /user/session - Login (ALL)
-router.post('/user/session', async (req, res) => {
+// POST /session — Login (anonymous)
+//
+// Body: { username, password }
+// Returns 201 { session_id, urole }
+router.post('/session', async (req, res) => {
     try {
         const { username, password } = req.body;
         if (!username || !password) {
@@ -35,10 +38,9 @@ router.post('/user/session', async (req, res) => {
             [sessionId, user.id, expiresAt]
         );
 
-        // Return urole so the frontend can conditionally show admin-only UI
-        // (the header's 管理員 menu entry, the /admin route). The API remains
-        // the source of truth for authorization — this is UI-only signal.
-        return res.status(200).json({ auth_token: sessionId, urole: user.urole });
+        // urole lets the frontend conditionally show admin-only UI. The API
+        // remains the source of truth for authorization — this is UI-only.
+        return res.status(201).json({ session_id: sessionId, urole: user.urole });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'API error' });

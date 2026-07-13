@@ -237,6 +237,10 @@ router.put('/competition/:id', async (req, res) => {
 // GET /competition/:id/enroll - List all enrollments for a competition
 // (admin view). Includes each enrolled user's display info, win/lose/tie
 // counts, and whether they have a linked code that has been tested.
+//
+// After the denormalization pass, "has any tested snapshot" reads from
+// app.snapshot.latest_test_status = 'success' — no LATERAL / EXISTS on
+// app.battle. Selected code lives on app.enroll.selected_code_id.
 router.get('/competition/:id/enroll', async (req, res) => {
     try {
         const { id } = req.params;
@@ -247,17 +251,15 @@ router.get('/competition/:id/enroll', async (req, res) => {
                u.username,
                u.full_name,
                e.win_count, e.lose_count, e.tie_count,
-               cs.code_id IS NOT NULL AS has_code,
+               e.selected_code_id IS NOT NULL AS has_code,
                EXISTS (
                    SELECT 1
                    FROM app.snapshot s
-                   JOIN app.battle b ON (b.a_snapshot_id = s.id OR b.b_snapshot_id = s.id)
-                   WHERE s.code_id = cs.code_id
-                     AND b.infra_ok = true AND b.input_ok = true
+                   WHERE s.code_id = e.selected_code_id
+                     AND s.latest_test_status = 'success'
                ) AS code_tested
              FROM app.enroll e
              JOIN app.user u ON u.id = e.user_id
-             LEFT JOIN app.code_select cs ON cs.enroll_id = e.id
              WHERE e.competition_id = $1
              ORDER BY u.username;`,
             [id]
@@ -294,41 +296,35 @@ router.post('/enroll', async (req, res) => {
 });
 
 // DELETE /enroll/:enroll_id - Admin withdraws a user from a competition
+//
+// selected_code_id now lives on app.enroll itself (no more app.code_select
+// junction table), so a single DELETE is sufficient.
 router.delete('/enroll/:enroll_id', async (req, res) => {
-    let client;
     try {
-        client = await pool.connect();
         const { enroll_id } = req.params;
-
-        await client.query('BEGIN;');
-
-        await client.query(
-            `DELETE FROM app.code_select WHERE enroll_id = $1;`,
+        const result = await pool.query(
+            `DELETE FROM app.enroll WHERE id = $1 RETURNING id;`,
             [enroll_id]
         );
-
-        const result = await client.query(
-            `DELETE FROM app.enroll WHERE id = $1 RETURNING *;`,
-            [enroll_id]
-        );
-
-        await client.query('COMMIT;');
-
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Enrollment not found' });
         }
         return res.status(200).json({ message: 'Enrollment withdrawn' });
     } catch (err) {
-        if (client) await client.query('ROLLBACK;').catch(() => {});
         console.error(err);
         return res.status(500).json({ error: 'API error' });
-    } finally {
-        if (client) client.release();
     }
 });
 
 // POST /approve-code - Admin marks code as tested (self-play synthetic battle)
+//
+// The INSERT + UPDATE pattern is deliberate: it lets both triggers fire
+// (trg_battle_insert_sets_snapshot_pending, then
+// trg_battle_update_resolves_snapshot_status) so app.snapshot ends up with
+// latest_test_status='success' and tested_at_utc set — same denormalized
+// state a normal Lambda-completed test would produce.
 router.post('/approve-code', async (req, res) => {
+    let client;
     try {
         const { user_id, competition_id } = req.body;
         if (!user_id || !competition_id) {
@@ -336,22 +332,22 @@ router.post('/approve-code', async (req, res) => {
         }
 
         const enrollResult = await pool.query(
-            `SELECT e.id AS enroll_id, cs.code_id
+            `SELECT e.id AS enroll_id, e.selected_code_id AS code_id
              FROM app.enroll e
-             LEFT JOIN app.code_select cs ON cs.enroll_id = e.id
              WHERE e.competition_id = $1 AND e.user_id = $2;`,
             [competition_id, user_id]
         );
         if (enrollResult.rows.length === 0) {
             return res.status(400).json({ error: 'User not enrolled in this competition' });
         }
-        const { enroll_id, code_id } = enrollResult.rows[0];
+        const { code_id } = enrollResult.rows[0];
         if (!code_id) {
             return res.status(400).json({ error: 'User has no code linked' });
         }
 
+        // Latest snapshot to be approved.
         const snapResult = await pool.query(
-            `SELECT id FROM app.snapshot
+            `SELECT id, latest_test_status FROM app.snapshot
              WHERE code_id = $1
              ORDER BY created_at_utc DESC LIMIT 1;`,
             [code_id]
@@ -360,32 +356,45 @@ router.post('/approve-code', async (req, res) => {
             return res.status(400).json({ error: 'No snapshot found' });
         }
         const snapshot_id = snapResult.rows[0].id;
-
-        const testedResult = await pool.query(
-            `SELECT 1 FROM app.battle
-             WHERE (a_snapshot_id = $1 OR b_snapshot_id = $1)
-               AND infra_ok = true AND input_ok = true
-             LIMIT 1;`,
-            [snapshot_id]
-        );
-        if (testedResult.rows.length > 0) {
+        if (snapResult.rows[0].latest_test_status === 'success') {
             return res.status(200).json({ message: 'Already tested' });
         }
 
-        const battleResult = await pool.query(
-            `INSERT INTO app.battle (competition_id, is_test, a_user_id, a_snapshot_id, b_user_id, b_snapshot_id,
-                                     infra_ok, input_ok, draw, winner_user_id, loser_user_id)
-             VALUES ($1, true, $2, $3, $2, $3,
-                     true, true, true, $2, $2)
-             RETURNING *;`,
+        client = await pool.connect();
+        await client.query('BEGIN;');
+
+        // INSERT pending row → trigger sets snapshot to 'pending'.
+        const insertResult = await client.query(
+            `INSERT INTO app.battle
+               (competition_id, is_test, a_user_id, a_snapshot_id, b_user_id, b_snapshot_id)
+             VALUES ($1, true, $2, $3, $2, $3)
+             RETURNING id;`,
             [competition_id, user_id, snapshot_id]
         );
+        const battle_id = insertResult.rows[0].id;
 
-        return res.status(201).json({ message: 'Code approved', battle_id: battleResult.rows[0].id });
+        // UPDATE to synthetic success → trigger promotes snapshot to
+        // 'success' and sets tested_at_utc.
+        await client.query(
+            `UPDATE app.battle
+               SET infra_ok = true,
+                   input_ok = true,
+                   draw = true,
+                   winner_user_id = $1,
+                   loser_user_id = $1
+             WHERE id = $2;`,
+            [user_id, battle_id]
+        );
+
+        await client.query('COMMIT;');
+        return res.status(201).json({ message: 'Code approved', battle_id });
     } catch (err) {
+        if (client) await client.query('ROLLBACK;').catch(() => {});
         console.error(err);
         return res.status(500).json({ error: 'API error' });
-    } 
+    } finally {
+        if (client) client.release();
+    }
 });
 
 // POST /battle-attempt/:id - Lambda attempt log: record that Lambda started processing
