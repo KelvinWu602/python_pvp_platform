@@ -4,6 +4,15 @@ import { renderHeader } from '../components/header.js';
 import { openModal } from '../components/modal.js';
 import { toast } from '../components/toast.js';
 
+// Dashboard: two-column layout.
+//   Left panel  = my enrollments (from GET /enroll)
+//   Right panel = the codes I authored for the selected enrollment's
+//                 competition (from GET /enroll/:eid/code)
+//
+// Codes are loaded per-enrollment on selection, cached in a module-scoped
+// Map keyed by enroll.id. The cache is invalidated whenever the user
+// mutates the code list for an enrollment (create, select) so subsequent
+// selections re-fetch.
 export async function renderDashboard() {
     const app = document.getElementById('app');
     app.appendChild(renderHeader());
@@ -30,15 +39,16 @@ export async function renderDashboard() {
     const codeBody = container.querySelector('[data-code-list]');
 
     let enrolls = [];
-    let codes = [];
+    let codes = [];          // codes for the currently-selected enrollment
     let selectedEnroll = null;
-    let selectedCodeId = null; // code_id linked to the selected enrollment
+    let selectedCodeId = null;
+
+    // Cache: enroll.id → codes array. Populated on first selection, evicted
+    // on any mutation for that enroll.
+    const codeCache = new Map();
 
     try {
-        [enrolls, codes] = await Promise.all([
-            api.listEnrolls(),
-            api.listCodes(),
-        ]);
+        enrolls = await api.listEnrolls();
     } catch (err) {
         enrollBody.innerHTML = `<div style="color:#e63946;">${t.generalError}</div>`;
         return;
@@ -98,9 +108,22 @@ export async function renderDashboard() {
         renderEnrolls();
         codeBody.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:2rem;">載入中...</div>`;
         try {
-            const linked = await api.getLinkedCode(e.id);
-            selectedCodeId = linked ? linked.id : null;
+            // Code list: cached per-enroll. Selected code: always live (cheap +
+            // changes independently of the code list).
+            const codesPromise = codeCache.has(e.id)
+                ? Promise.resolve(codeCache.get(e.id))
+                : api.listEnrollCodes(e.id).then(list => {
+                    codeCache.set(e.id, list);
+                    return list;
+                });
+            const [freshCodes, selected] = await Promise.all([
+                codesPromise,
+                api.getSelectedCode(e.id).catch(() => null),
+            ]);
+            codes = freshCodes;
+            selectedCodeId = selected ? selected.id : null;
         } catch (err) {
+            codes = [];
             selectedCodeId = null;
         }
         renderCodes();
@@ -109,11 +132,10 @@ export async function renderDashboard() {
     function renderCodes() {
         codeBody.innerHTML = '';
         if (!selectedEnroll) return;
-        const scoped = codes.filter(c => c.competition_id === selectedEnroll.competition_id);
-        if (scoped.length === 0) {
+        if (codes.length === 0) {
             codeBody.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:1rem;">${t.noCodeYet}</div>`;
         }
-        for (const c of scoped) {
+        for (const c of codes) {
             const card = document.createElement('div');
             card.className = 'pvp-card';
             const isSelected = c.id === selectedCodeId;
@@ -133,7 +155,7 @@ export async function renderDashboard() {
             card.addEventListener('click', async () => {
                 if (c.id === selectedCodeId) return; // already selected → no-op
                 try {
-                    await api.linkCode(selectedEnroll.id, c.id);
+                    await api.selectCode(selectedEnroll.id, c.id);
                     selectedCodeId = c.id;
                     renderCodes();
                     toast('已選定為比賽代碼', 'success');
@@ -178,11 +200,10 @@ export async function renderDashboard() {
                     return false;
                 }
                 try {
-                    const res = await api.createCode({
-                        name,
-                        code: '',
-                        competition_id: selectedEnroll.competition_id,
-                    });
+                    const res = await api.createCode(selectedEnroll.id, name);
+                    // Invalidate this enroll's cache so the new code appears
+                    // if the user comes back to the dashboard.
+                    codeCache.delete(selectedEnroll.id);
                     location.hash = `#/code/${res.id}`;
                     return true;
                 } catch (e) {

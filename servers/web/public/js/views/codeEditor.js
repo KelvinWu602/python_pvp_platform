@@ -4,6 +4,18 @@ import { renderHeader } from '../components/header.js';
 import { toast } from '../components/toast.js';
 import { parseManifest, makePythonCompletionSource } from '../components/manifestCompletion.js';
 
+// Code editor view.
+//
+// Page load fires four parallel requests:
+//   GET /code/:cid                — metadata (name, enroll_id, ...)
+//   GET /code/:cid/text           — latest snapshot text (may be null)
+//   GET /code/:cid/snapshot       — snapshot list with test status
+//   GET /competition/:cid/manifest — S3 reference for autocomplete data
+//
+// The API resolves `enroll_id` server-side for us, so we don't need to
+// fetch the enroll list separately. The test button is enabled when the
+// user is enrolled (code.enroll_id != null) and the latest snapshot is
+// retestable (test_status null or 'infra_error').
 export async function renderCodeEditor(codeId) {
     const app = document.getElementById('app');
     app.appendChild(renderHeader());
@@ -37,10 +49,14 @@ export async function renderCodeEditor(codeId) {
         history.length > 1 ? history.back() : (location.hash = '#/dashboard');
     });
 
-    let code, snapshots, enrollForCompetition;
+    // Three independent requests in parallel. The manifest requires
+    // competition_id (only known after getCode resolves), so it's chained
+    // after this first batch.
+    let code, codeText, snapshots;
     try {
-        [code, snapshots] = await Promise.all([
+        [code, { text: codeText }, snapshots] = await Promise.all([
             api.getCode(codeId),
+            api.getCodeText(codeId),
             api.listSnapshots(codeId),
         ]);
     } catch (err) {
@@ -48,26 +64,22 @@ export async function renderCodeEditor(codeId) {
             `<div style="color:#e63946;">${t.generalError}</div>`;
         return;
     }
+
     container.querySelector('[data-code-name]').textContent = code.name;
 
-    // Find user's enrollment matching this code's competition (to enable 測試 button)
-    // + fetch competition (for manifest_reference) in parallel.
-    let competition = null;
+    // Manifest fetch. Failure is non-fatal — editor still works, autocomplete
+    // just falls back to no completion.
+    let manifestResp = null;
     try {
-        const [enrolls, comp] = await Promise.all([
-            api.listEnrolls(),
-            api.getCompetition(code.competition_id).catch(() => null),
-        ]);
-        enrollForCompetition = enrolls.find(e => e.competition_id === code.competition_id);
-        competition = comp;
-    } catch { enrollForCompetition = null; }
+        manifestResp = await api.getCompetitionManifest(code.competition_id);
+    } catch { /* non-fatal */ }
 
     // Fetch manifest.json from S3 (public bucket, direct browser fetch).
     // Manifest drives autocomplete. Failure here is non-fatal — editor still
     // works, just without autocomplete.
     let manifest = null;
-    if (competition && competition.manifest_reference) {
-        manifest = await fetchManifest(competition.manifest_reference);
+    if (manifestResp && manifestResp.reference) {
+        manifest = await fetchManifest(manifestResp.reference);
     }
     const manifestData = manifest ? parseManifest(manifest) : null;
     const completionSource = manifestData ? makePythonCompletionSource(manifestData) : null;
@@ -153,7 +165,9 @@ export async function renderCodeEditor(codeId) {
         view = new EditorView({
             parent: cmHost,
             state: EditorState.create({
-                doc: code.code || '',
+                // codeText can be null when the code has no snapshot yet
+                // (fresh from POST /enroll/:eid/code). Start with empty doc.
+                doc: codeText ?? '',
                 extensions,
             }),
         });
@@ -177,7 +191,7 @@ export async function renderCodeEditor(codeId) {
         ta.style.fontFamily = 'JetBrains Mono, Consolas, monospace';
         ta.style.padding = '1rem';
         ta.style.border = 'none';
-        ta.value = code.code || '';
+        ta.value = codeText ?? '';
         cmHost.appendChild(ta);
         view = {
             state: { doc: { toString: () => ta.value } },
@@ -185,14 +199,14 @@ export async function renderCodeEditor(codeId) {
         };
     }
 
-    // Save handler
+    // Save handler — creates a new snapshot.
     const saveBtn = container.querySelector('[data-save]');
     saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
         saveBtn.textContent = '...';
         try {
             const newCode = view.state.doc.toString();
-            await api.updateCode(codeId, newCode);
+            await api.createSnapshot(codeId, newCode);
             toast('已儲存', 'success');
             await refreshSnapshots();
         } catch (err) {
@@ -210,10 +224,12 @@ export async function renderCodeEditor(codeId) {
     //
     // Users need to see snapshot state flip from `pending` → success/failed
     // without a full page reload. Strategy:
-    //   * Manual `↻` button: always re-fetches on click.
+    //   * Manual `↻` button: always re-fetches the whole list.
     //   * Auto-poll every 10s while ANY snapshot has test_status='pending'.
-    //     Stops as soon as none are pending. Also cleaned up on hashchange
-    //     so leaving the page doesn't keep firing requests.
+    //     Per-snapshot fetches (GET /code/:cid/snapshot/:sid) rather than
+    //     re-listing everything — the list rarely changes; only pending
+    //     rows do. Stops as soon as none are pending. Also cleaned up on
+    //     hashchange so leaving the page doesn't keep firing requests.
     //
     // Silent errors: background polls swallow network errors (a transient
     // failure shouldn't blast a toast every 10s).
@@ -221,10 +237,35 @@ export async function renderCodeEditor(codeId) {
     function schedulePollIfNeeded() {
         const anyPending = snapshots.some(s => s.test_status === 'pending');
         if (anyPending && !pollTimer) {
-            pollTimer = setInterval(() => { refreshSnapshots({ silent: true }); }, 10000);
+            pollTimer = setInterval(pollPending, 10000);
         } else if (!anyPending && pollTimer) {
             clearInterval(pollTimer); pollTimer = null;
         }
+    }
+    async function pollPending() {
+        const pendingIds = snapshots
+            .filter(s => s.test_status === 'pending')
+            .map(s => s.id);
+        if (pendingIds.length === 0) {
+            clearInterval(pollTimer); pollTimer = null;
+            return;
+        }
+        try {
+            const updates = await Promise.all(
+                pendingIds.map(id => api.getSnapshot(codeId, id).catch(() => null))
+            );
+            let changed = false;
+            for (const u of updates) {
+                if (!u) continue;
+                const idx = snapshots.findIndex(s => s.id === u.id);
+                if (idx >= 0) {
+                    snapshots[idx] = u;
+                    changed = true;
+                }
+            }
+            if (changed) renderSnapshots();
+            schedulePollIfNeeded();
+        } catch { /* silent */ }
     }
     async function refreshSnapshots({ silent = false } = {}) {
         if (!silent) {
@@ -264,6 +305,11 @@ export async function renderCodeEditor(codeId) {
             card.className = 'pvp-card';
             card.style.cursor = s.test_id ? 'pointer' : 'default';
             const isLatest = i === 0;
+
+            // Derive retestable client-side: null (never tested) or
+            // infra_error (platform-side failure) → retestable. success /
+            // pending / user_error all block retesting.
+            const retestable = s.test_status === null || s.test_status === 'infra_error';
 
             const left = document.createElement('div');
             left.style.flex = '1';
@@ -315,9 +361,10 @@ export async function renderCodeEditor(codeId) {
             }
 
             // 測試 button: only on the latest snapshot, only when this
-            // snapshot is retestable (never tested, or previous run was
-            // infra_error), and the user is enrolled in the competition.
-            if (isLatest && enrollForCompetition && s.retestable) {
+            // snapshot is retestable, and only when the caller is enrolled
+            // in the code's competition (code.enroll_id is truthy — the
+            // server derived it from the caller's session).
+            if (isLatest && code.enroll_id && retestable) {
                 const testBtn = document.createElement('button');
                 testBtn.className = 'test-btn';
                 testBtn.textContent = t.test;
@@ -326,7 +373,7 @@ export async function renderCodeEditor(codeId) {
                     testBtn.disabled = true;
                     testBtn.textContent = '...';
                     try {
-                        const res = await api.createTest(enrollForCompetition.id, codeId);
+                        const res = await api.createTest(codeId);
                         location.hash = `#/test/${res.id}`;
                     } catch (err) {
                         // 409 = server-side race we lost (someone else just

@@ -2,6 +2,16 @@ import { t } from '../i18n.js';
 import { api, videoUrl } from '../api.js';
 import { renderHeader } from '../components/header.js';
 
+// Battle result view.
+//
+// A user can only view a battle they participated in. `listEnrolls` gives us
+// the enrollment for the battle's competition, from which we get:
+//   - competition_display_name (for the header title)
+//   - user_id (to determine which side of the battle is "me")
+//   - id (for the rematch button and back navigation)
+//
+// No separate GET /competition/:cid call — that endpoint is gone; display
+// name comes from the enrollment.
 export async function renderBattleResult(battleId) {
     const app = document.getElementById('app');
     app.appendChild(renderHeader());
@@ -39,13 +49,10 @@ export async function renderBattleResult(battleId) {
     let stop = false;
     window.addEventListener('hashchange', () => { stop = true; }, { once: true });
 
-    // Fetch competition name once
-    let compName = '';
-    let selfEnrollId = null;
-    let opponentEnroll = null;
-    let selfEnroll = null;
-
     let battle;
+    let selfEnroll = null;
+    let selfEnrollId = null;
+
     try {
         battle = await api.getBattle(battleId);
     } catch (err) {
@@ -53,41 +60,20 @@ export async function renderBattleResult(battleId) {
         return;
     }
 
-    try {
-        const comp = await api.getCompetition(battle.competition_id);
-        compName = comp.display_name;
-        container.querySelector('[data-comp-name]').textContent = compName;
-    } catch { /* best effort */ }
-
-    // Determine my side + opponent id via listEnrolls
+    // Resolve the caller's enrollment for this competition. This gives us the
+    // display name AND the user_id we need to figure out which side is me.
     try {
         const enrolls = await api.listEnrolls();
-        // The API only returns your own enrolls; find the one for this competition
         selfEnroll = enrolls.find(e => e.competition_id === battle.competition_id);
         if (selfEnroll) {
             selfEnrollId = selfEnroll.id;
             backEnrollId = selfEnroll.id;
+            container.querySelector('[data-comp-name]').textContent =
+                selfEnroll.competition_display_name || t.battle;
         }
-    } catch { /* fall through */ }
+    } catch { /* best effort */ }
 
-    // Get opponent's enroll stats (not directly available — inferred via battle list is heavy).
-    // Skip for now (design's opponent score is a nice-to-have; without user-listing endpoint we can't fetch).
-    // Fall back to showing "N/A" for opponent score.
-
-    async function poll() {
-        while (!stop) {
-            try { battle = await api.getBattle(battleId); }
-            catch (err) {
-                infoBox.innerHTML = `<div style="color:#e63946;">${t.loadFailed}</div>`;
-                return;
-            }
-            renderInfo();
-            renderVideo();
-            if (battle.infra_ok !== null) return;
-            await new Promise(r => setTimeout(r, 3000));
-        }
-    }
-    // Re-fetch selfEnroll to have latest counts
+    // Poll for completion and refresh the caller's win/lose/tie counters.
     async function pollWithCounts() {
         while (!stop) {
             try {
@@ -112,7 +98,7 @@ export async function renderBattleResult(battleId) {
         const success = battle.infra_ok === true && battle.input_ok === true;
         const failed = battle.infra_ok === false || battle.input_ok === false;
 
-        // Determine which side is "me"
+        // Determine which side is "me" using enroll.user_id.
         const iAmA = selfEnroll && battle.a_user_id === selfEnroll.user_id;
         const iAmB = selfEnroll && battle.b_user_id === selfEnroll.user_id;
 

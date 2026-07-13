@@ -4,6 +4,16 @@ import { renderHeader } from '../components/header.js';
 import { renderHistogram } from '../components/histogram.js';
 import { toast } from '../components/toast.js';
 
+// Competition page: stats + histogram + selected code + battle history.
+//
+// Data sources:
+//   GET /enroll/:eid                         — enrollment detail (win/lose/tie counts)
+//   GET /competition/:cid/histogram          — plain array of {score, count}
+//   GET /enroll/:eid/code/selected           — selected code or null
+//   GET /enroll/:eid/battle                  — battle history (server-derived result + opponent)
+//
+// The server now derives per-battle `result` and `opponent_display_name`
+// from the caller's perspective, so the client stops doing that itself.
 export async function renderCompetition(enrollId) {
     const app = document.getElementById('app');
     app.appendChild(renderHeader());
@@ -41,12 +51,12 @@ export async function renderCompetition(enrollId) {
         location.hash = '#/dashboard';
     });
 
-    let enroll, hist, linkedCode, battles;
+    let enroll, hist, selectedCode, battles;
     try {
         enroll = await api.getEnroll(enrollId);
-        [hist, linkedCode, battles] = await Promise.all([
+        [hist, selectedCode, battles] = await Promise.all([
             api.getCompetitionHistogram(enroll.competition_id),
-            api.getLinkedCode(enrollId).catch(() => null),
+            api.getSelectedCode(enrollId).catch(() => null),
             api.listBattles(enrollId).catch(() => []),
         ]);
     } catch (err) {
@@ -55,12 +65,9 @@ export async function renderCompetition(enrollId) {
         return;
     }
 
-    // Only completed, successful battles show in history — infra_error /
-    // user_error entries are hidden client-side.
-    const shownBattles = (battles || []).filter(
-        b => b.infra_ok === true && b.input_ok === true
-    );
-    // How many rows are currently visible. "顯示更多" bumps by 10.
+    // The server already filters to completed successful battles by default,
+    // and derives `result` from the caller's perspective. No client-side
+    // filtering or outcome derivation needed.
     let historyVisibleCount = 10;
 
     container.querySelector('[data-comp-name]').textContent = enroll.competition_display_name || '';
@@ -118,7 +125,9 @@ export async function renderCompetition(enrollId) {
         wrap.appendChild(stats);
 
         // ── Histogram (returns its own rounded container) ─────────────────
-        wrap.appendChild(renderHistogram(hist));
+        // Server no longer returns my_score; derive from the counters.
+        const myScore = enroll.win_count * 2 + enroll.tie_count;
+        wrap.appendChild(renderHistogram(hist, myScore));
 
         // ── Countdown ─────────────────────────────────────────────────────
         const countdown = document.createElement('div');
@@ -165,11 +174,11 @@ export async function renderCompetition(enrollId) {
         }
         el.innerHTML = `<span style="${cls}">${escapeHtml(msg)}</span>`;
 
-        // Disable battle button if not in window
+        // Disable battle button if not in window or no selected code.
         const btn = compBody.querySelector('.battle-btn');
         if (btn) {
             const inWindow = now >= start && now <= end;
-            btn.disabled = !inWindow || !linkedCode;
+            btn.disabled = !inWindow || !selectedCode;
         }
     }
 
@@ -189,20 +198,21 @@ export async function renderCompetition(enrollId) {
 
     function renderCodeBody() {
         codeBody.innerHTML = '';
-        if (linkedCode) {
+        if (selectedCode) {
             const card = document.createElement('div');
             card.className = 'pvp-card';
-            const lastLine = linkedCode.tested
-                ? `${t.lastTested}：${fmtDateTime(linkedCode.updated_at_utc || linkedCode.created_at_utc)}`
+            // Selected-code response gives us tested_at_utc directly.
+            const lastLine = selectedCode.tested_at_utc
+                ? `${t.lastTested}：${fmtDateTime(selectedCode.tested_at_utc)}`
                 : '尚未測試';
             card.innerHTML = `
                 <div style="flex:1;">
-                    <div class="pvp-card-title">${escapeHtml(linkedCode.name)}</div>
+                    <div class="pvp-card-title">${escapeHtml(selectedCode.name)}</div>
                     <div class="pvp-card-sub">${lastLine}</div>
                 </div>
             `;
             card.addEventListener('click', () => {
-                location.hash = `#/code/${linkedCode.id}`;
+                location.hash = `#/code/${selectedCode.id}`;
             });
             codeBody.appendChild(card);
         } else {
@@ -224,23 +234,33 @@ export async function renderCompetition(enrollId) {
         renderHistoryList(historyBody);
     }
 
-    // Render the visible slice of shownBattles into `listEl`. Called on first
+    // Render the visible slice of battles into `listEl`. Called on first
     // render and again when the user clicks 顯示更多 to bump the count.
     function renderHistoryList(listEl) {
         listEl.innerHTML = '';
-        if (shownBattles.length === 0) {
+        const all = battles || [];
+        if (all.length === 0) {
             listEl.innerHTML = `<div style="color:#94a3b8; padding:1rem; text-align:center;">${t.noBattleHistory}</div>`;
             return;
         }
-        const me = enroll.user_id;
-        const slice = shownBattles.slice(0, historyVisibleCount);
+        const slice = all.slice(0, historyVisibleCount);
         for (const b of slice) {
+            // Server-provided result is authoritative: 'win' | 'lose' |
+            // 'draw'. Map to the existing badge class + label.
             let outcome, label;
-            if (b.draw) { outcome = 'draw'; label = t.draw; }
-            else if (b.winner_user_id === me) { outcome = 'win'; label = t.win; }
-            else { outcome = 'lose'; label = t.lose; }
+            switch (b.result) {
+                case 'win':  outcome = 'win';  label = t.win;  break;
+                case 'lose': outcome = 'lose'; label = t.lose; break;
+                case 'draw': outcome = 'draw'; label = t.draw; break;
+                default:
+                    // Unexpected result value ('pending' / 'failed') would
+                    // only appear if the server started returning them
+                    // (needs an explicit ?include_pending / ?include_failed
+                    // flag). Skip them silently.
+                    continue;
+            }
 
-            const opponentName = b.opponent_full_name || b.opponent_username || '';
+            const opponentName = b.opponent_display_name || '';
             const row = document.createElement('div');
             row.className = 'pvp-card';
             row.style.cursor = 'pointer';
@@ -257,7 +277,7 @@ export async function renderCompetition(enrollId) {
             listEl.appendChild(row);
         }
         // 顯示更多 button when more rows exist beyond the current window.
-        if (shownBattles.length > historyVisibleCount) {
+        if (all.length > historyVisibleCount) {
             const moreWrap = document.createElement('div');
             moreWrap.style.textAlign = 'center';
             moreWrap.style.marginTop = '0.5rem';

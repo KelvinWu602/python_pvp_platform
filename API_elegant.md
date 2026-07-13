@@ -63,6 +63,7 @@ Response:
   {
     "id": "uuid",
     "competition_id": "uuid",
+    "user_id": "uuid",
     "competition_display_name": "string",
     "start_time_utc": "timestamp",
     "end_time_utc": "timestamp"
@@ -73,6 +74,9 @@ Response:
 * `competition_id` is included because the frontend correlates the current
   battle / code back to its enrollment by competition (see `battleResult.js`,
   `codeEditor.js`).
+* `user_id` is included because `battleResult.js` needs to determine which
+  side of a battle is the caller (a vs. b) to render the win/lose banner.
+  It's cheaper than a separate `/user/me` endpoint.
 * `win/lose/tie` counts are intentionally **not** in the list; they're on the
   detail endpoint.
 
@@ -89,6 +93,7 @@ Response:
 {
   "id": "uuid",
   "competition_id": "uuid",
+  "user_id": "uuid",
   "competition_display_name": "string",
   "competition_description": "string",
   "start_time_utc": "timestamp",

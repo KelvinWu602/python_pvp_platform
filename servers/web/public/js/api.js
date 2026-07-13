@@ -44,7 +44,7 @@ async function request(method, path, body, opts = {}) {
         throw new ApiError(401, { error: 'Session expired' });
     }
 
-    // Empty body handling
+    // Empty body handling (e.g. 204 No Content).
     let payload = null;
     const text = await res.text();
     if (text) {
@@ -57,38 +57,50 @@ async function request(method, path, body, opts = {}) {
     return payload;
 }
 
+// User-facing API. Endpoint surface mirrors API_elegant.md — every method
+// here maps 1:1 to a documented route, and the shape of args + returned
+// data matches the doc.
 export const api = {
-    // Public routes (no auth injection)
+    // ── 1. Session ────────────────────────────────────────────────────
     login: (username, password) =>
-        request('POST', '/public/user/session', { username, password }, { public: true }),
+        request('POST', '/public/session', { username, password }, { public: true }),
+    logout: () => request('DELETE', '/session'),
 
-    // User routes
-    logout: () => request('DELETE', '/user/session'),
-
-    listCompetitions: () => request('GET', '/competition'),
-    getCompetition: (id) => request('GET', `/competition/${id}`),
-    getCompetitionHistogram: (id) => request('GET', `/competition/${id}/score-histogram`),
-
-    listCodes: () => request('GET', '/code'),
-    getCode: (id) => request('GET', `/code/${id}`),
-    createCode: (payload) => request('POST', '/code', payload),
-    updateCode: (id, code) => request('PUT', `/code/${id}`, { code }),
-    listSnapshots: (id) => request('GET', `/code/${id}/snapshot`),
-
+    // ── 2. Enrollments ────────────────────────────────────────────────
     listEnrolls: () => request('GET', '/enroll'),
-    getEnroll: (id) => request('GET', `/enroll/${id}`),
-    getLinkedCode: (eid) => request('GET', `/enroll/${eid}/code`),
-    linkCode: (eid, code_id) => request('POST', `/enroll/${eid}/code`, { code_id }),
-    unlinkCode: (eid, cid) => request('DELETE', `/enroll/${eid}/code/${cid}`),
+    getEnroll: (eid) => request('GET', `/enroll/${eid}`),
 
-    createTest: (eid, code_id) => request('POST', `/enroll/${eid}/test`, { code_id }),
-    listTests: (eid) => request('GET', `/enroll/${eid}/test`),
-    getTest: (id) => request('GET', `/test/${id}?log=true&error=true`),
+    // ── 3. Codes ──────────────────────────────────────────────────────
+    listEnrollCodes: (eid) => request('GET', `/enroll/${eid}/code`),
+    createCode: (eid, name) => request('POST', `/enroll/${eid}/code`, { name }),
+    getCode: (cid) => request('GET', `/code/${cid}`),
+    getCodeText: (cid) => request('GET', `/code/${cid}/text`),
 
-    createBattle: (eid, b_enroll_id) =>
-        request('POST', `/enroll/${eid}/battle`, b_enroll_id ? { b_enroll_id } : {}),
+    // ── 4. Selected code (singleton subresource) ──────────────────────
+    getSelectedCode: (eid) => request('GET', `/enroll/${eid}/code/selected`),
+    selectCode: (eid, code_id) => request('PUT', `/enroll/${eid}/code/selected`, { code_id }),
+    clearSelectedCode: (eid) => request('DELETE', `/enroll/${eid}/code/selected`),
+
+    // ── 5. Snapshots ──────────────────────────────────────────────────
+    listSnapshots: (cid) => request('GET', `/code/${cid}/snapshot`),
+    getSnapshot: (cid, sid) => request('GET', `/code/${cid}/snapshot/${sid}`),
+    createSnapshot: (cid, text) => request('POST', `/code/${cid}/snapshot`, { text }),
+
+    // ── 6. Tests ──────────────────────────────────────────────────────
+    createTest: (cid) => request('POST', `/code/${cid}/test`),
+    getTest: (tid) => request('GET', `/test/${tid}?log=true&error=true`),
+
+    // ── 7. Battles ────────────────────────────────────────────────────
+    // Matchmaking is server-controlled; the caller cannot pick an opponent.
+    createBattle: (eid) => request('POST', `/enroll/${eid}/battle`),
     listBattles: (eid) => request('GET', `/enroll/${eid}/battle`),
-    getBattle: (id) => request('GET', `/battle/${id}`),
+    getBattle: (bid) => request('GET', `/battle/${bid}`),
+
+    // ── 8. Competition ────────────────────────────────────────────────
+    // Only two user-facing competition endpoints. Display name lives on
+    // each enrollment; the full competition row is not exposed.
+    getCompetitionManifest: (cid) => request('GET', `/competition/${cid}/manifest`),
+    getCompetitionHistogram: (cid) => request('GET', `/competition/${cid}/histogram`),
 
     // ── Admin (root-only). All routes below hit /admin/* and require
     // urole='root'; the server returns 403 for non-root callers.

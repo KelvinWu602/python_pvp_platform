@@ -53,7 +53,7 @@ export function renderLogin() {
         const password = form.password.value;
         try {
             const res = await api.login(username, password);
-            setAuth(res.auth_token, username, res.urole);
+            setAuth(res.session_id, username, res.urole);
             location.hash = '#/dashboard';
         } catch (err) {
             if (err instanceof ApiError && err.status === 401) {

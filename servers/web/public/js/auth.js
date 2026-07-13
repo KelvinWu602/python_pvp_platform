@@ -1,29 +1,35 @@
 // Session token + username + role persistence.
-const KEY_TOKEN = 'pvp_auth_token';
+//
+// Storage: sessionStorage (not localStorage). Sessions naturally die when the
+// user closes the tab, and other origins cannot access this tab's
+// sessionStorage. Same-origin XSS can still read it — an HttpOnly cookie would
+// be the fully-hardened answer, but that requires the backend to switch away
+// from Bearer-token auth.
+const KEY_TOKEN = 'pvp_session_id';
 const KEY_USERNAME = 'pvp_username';
 const KEY_UROLE = 'pvp_urole';
 
 export function getToken() {
-    return localStorage.getItem(KEY_TOKEN);
+    return sessionStorage.getItem(KEY_TOKEN);
 }
 export function getUsername() {
-    return localStorage.getItem(KEY_USERNAME) || '';
+    return sessionStorage.getItem(KEY_USERNAME) || '';
 }
 export function getUrole() {
-    return localStorage.getItem(KEY_UROLE) || '';
+    return sessionStorage.getItem(KEY_UROLE) || '';
 }
 export function isAdmin() {
     return getUrole() === 'root';
 }
 export function setAuth(token, username, urole) {
-    localStorage.setItem(KEY_TOKEN, token);
-    if (username) localStorage.setItem(KEY_USERNAME, username);
-    if (urole) localStorage.setItem(KEY_UROLE, urole);
+    sessionStorage.setItem(KEY_TOKEN, token);
+    if (username) sessionStorage.setItem(KEY_USERNAME, username);
+    if (urole) sessionStorage.setItem(KEY_UROLE, urole);
 }
 export function clearAuth() {
-    localStorage.removeItem(KEY_TOKEN);
-    localStorage.removeItem(KEY_USERNAME);
-    localStorage.removeItem(KEY_UROLE);
+    sessionStorage.removeItem(KEY_TOKEN);
+    sessionStorage.removeItem(KEY_USERNAME);
+    sessionStorage.removeItem(KEY_UROLE);
 }
 export function isLoggedIn() {
     return !!getToken();

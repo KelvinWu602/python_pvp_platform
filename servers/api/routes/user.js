@@ -45,6 +45,7 @@ router.get('/enroll', async (req, res) => {
             `SELECT
                e.id,
                e.competition_id,
+               e.user_id,
                c.display_name AS competition_display_name,
                c.start_time_utc,
                c.end_time_utc
@@ -69,6 +70,7 @@ router.get('/enroll/:enroll_id', checkEnrollOwner, async (req, res) => {
             `SELECT
                e.id,
                e.competition_id,
+               e.user_id,
                c.display_name AS competition_display_name,
                c.description  AS competition_description,
                c.start_time_utc,
