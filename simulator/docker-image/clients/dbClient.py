@@ -63,11 +63,14 @@ class DBClient:
 
     # -- competition retrieval ---------------------------------------------
     def fetch_competition(self, competition_id):
-        """Fetch competition from the API (root bypass on user route).
+        """Fetch competition from the API (admin endpoint).
 
-        GET /competition/:id → competition row dict
+        GET /admin/competition/:id → { id, npc_user_id, display_name,
+                                       description, start_time_utc,
+                                       end_time_utc, game_reference,
+                                       helper_reference, manifest_reference }
         """
-        result = self._request('GET', f'/competition/{competition_id}')
+        result = self._request('GET', f'/admin/competition/{competition_id}')
         if not result or 'game_reference' not in result:
             raise RuntimeError(f'competition not found: {competition_id}')
         return result

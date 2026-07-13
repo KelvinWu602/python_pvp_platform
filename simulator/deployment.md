@@ -9,14 +9,14 @@ This guide walks through deploying `python-pvp-simulator` — the AWS Lambda fun
 The simulator Lambda is triggered by SQS messages representing battle jobs. It:
 
 1. **Fetches both players' snapshot code** from the API (`GET /admin/snapshot/:id`).
-2. **Fetches the competition** from the API (`GET /competition/:id`) to get the game S3 key.
+2. **Fetches the competition** from the API (`GET /admin/competition/:id`) to get the game S3 key.
 3. **Downloads the game definition** from S3 (`game/<game_reference>/game.py`).
 4. **Runs the match** by dynamically importing the game and both strategy modules.
 5. **Uploads the replay video** to S3 (`output/<battle_id>.mp4`).
 6. **Callbacks the result** via the API (`PUT /admin/battle/:id`) which sets `infra_ok`/`input_ok` and inserts an `execution_log` row in one transaction.
 
 ```
-API server (POST /enroll/:eid/test or /battle)
+API server (POST /code/:cid/test or POST /enroll/:eid/battle)
     │
     ├─ INSERT app.battle (infra_ok=NULL, input_ok=NULL)
     └─ SendMessage → python-pvp-battle-queue (SQS)
@@ -24,7 +24,7 @@ API server (POST /enroll/:eid/test or /battle)
                            ▼
                     python-pvp-simulator (Lambda, BatchSize=1)
                            │
-                           ├─ GET /competition/:id  (game_reference for S3)
+                           ├─ GET /admin/competition/:id  (game_reference for S3)
                            │
                            ├─ GET /admin/snapshot/:id  (player A code)
                            │
@@ -523,7 +523,7 @@ The test message will write to the DLQ after 3 failed retries if the game or cod
 |---|---|---|---|---|
 | `RUNNING_MODE` | Yes | `production` | `production` → uses `clients/` (boto3 S3 + HTTP API dbClient). `test` → uses `testClients/` (local file doubles). Always `production` on Lambda. |
 | `S3_BUCKET` | Yes | `python-pvp-store` | S3 bucket name. No path prefixes here — keys are constructed in `handler.py`. |
-| `LAMBDA_CALLBACK_BASE_URL` | Yes | — | Full base URL of the API server, e.g. `https://api.yourdomain.com`. The Lambda calls this over HTTPS to access `/competition/*`, `/admin/snapshot/*`, `/admin/battle/*`. Must be reachable from Lambda. |
+| `LAMBDA_CALLBACK_BASE_URL` | Yes | — | Full base URL of the API server, e.g. `https://api.yourdomain.com`. The Lambda calls this over HTTPS to access `/admin/competition/*`, `/admin/snapshot/*`, `/admin/battle/*`, `/admin/battle-attempt/*`. Must be reachable from Lambda. |
 | `LAMBDA_CALLBACK_TOKEN` | Yes | — | Root Bearer token for API callback auth. Create a permanent `user_session` row with `urole=root`. |
 | `LAMBDA_CALLBACK_TIMEOUT` | No | `10` | Per-request timeout in seconds for API calls. The API should respond in <1s; 10s is a generous safety margin. |
 | `WORK_DIR` | No | `/tmp` | Working directory root. Lambda only allows writes to `/tmp`; do not change this. |

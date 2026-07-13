@@ -29,13 +29,14 @@ envelope). See `docker-image/handler.py`:
 ```
 
 Flow the handler runs:
-1. `fetch_competition(competition_id)` → get `game_reference` (S3 key for game).
-2. `fetch_snapshot(a_snapshot_id)` / `fetch_snapshot(b_snapshot_id)` → get code text.
-3. Download `game/<game_reference>/game.py` from S3 (`python-pvp-store`).
-4. Write `a.py` / `b.py` to /tmp/strategies/, import dynamically.
-5. Run `init()` → `simulate(a, b)` → `export_video()`.
-6. Upload replay to `output/<battle_id>.mp4`.
-7. `callback_battle(...)` → `PUT /admin/battle/:id` (sets infra_ok/input_ok + INSERTs execution_log).
+1. `log_attempt(battle_id, lambda_request_id)` → `POST /admin/battle-attempt/:id` (INSERTs execution_log breadcrumb).
+2. `fetch_competition(competition_id)` → `GET /admin/competition/:id`; get `game_reference` (S3 key for game).
+3. `fetch_snapshot(a_snapshot_id)` / `fetch_snapshot(b_snapshot_id)` → `GET /admin/snapshot/:id`; get code text.
+4. Download `game/<game_reference>/game.py` from S3 (`python-pvp-store`).
+5. Write `a.py` / `b.py` to /tmp/strategies/, import dynamically.
+6. Run `init()` → `simulate(a, b)` → `export_video()`.
+7. Upload replay to `output/<battle_id>.mp4`.
+8. `callback_battle(...)` → `PUT /admin/battle/:id` (sets infra_ok/input_ok on app.battle; triggers denormalize snapshot test state for `is_test=true`).
 
 Required env vars (see `docker-image/clients/`):
 

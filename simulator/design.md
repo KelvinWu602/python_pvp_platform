@@ -47,10 +47,10 @@ No `simulation_id` — the battle_id itself is the stable identity across retrie
 
 1. Parse SQS event → extract battle payload.
 2. `setup_clients()` — instantiate S3 + API clients; `LAMBDA_CALLBACK_TOKEN` captured in `db_client.token`, then stripped from `os.environ`.
-3. `log_attempt(battle_id, lambda_request_id, start_time)` → API `PUT /admin/battle-attempt/:id`
+3. `log_attempt(battle_id, lambda_request_id, start_time)` → API `POST /admin/battle-attempt/:id`
    → INSERTs execution_log row with NULL end_time_utc (breadcrumb for finding CloudWatch logs).
 4. Seed RNG with `hash(battle_id)` — deterministic retries produce the same result.
-5. `fetch_competition(competition_id)` → API GET /competition/:id
+5. `fetch_competition(competition_id)` → API `GET /admin/competition/:id`
    → get game_reference, helper_reference, manifest_reference (S3 keys).
 6. `fetch_snapshot(a_snapshot_id)` / `fetch_snapshot(b_snapshot_id)` → API GET /admin/snapshot/:id
    → get code text for both players.
@@ -108,7 +108,7 @@ The API's `PUT /admin/battle/:id` uses `WHERE infra_ok IS NULL` so a late retry 
 ## SQS topology
 
 ```
-POST /enroll/:eid/test (or /battle) → enqueueBattle → python-pvp-battle-queue
+POST /code/:cid/test (or POST /enroll/:eid/battle) → enqueueBattle → python-pvp-battle-queue
                                                         ├─ maxReceiveCount (3)
                                                         ├─ visibility timeout (6 min)
                                                         └─ DLQ: python-pvp-battle-queue-dlq
@@ -132,11 +132,11 @@ The API handler uses `WHERE infra_ok IS NULL` so a late retry won't overwrite su
 
 ## API endpoints the Lambda calls
 
-| Method | Path                  | Auth       | Purpose |
-|--------|-----------------------|------------|---------|
-| GET    | /competition/:id      | Root token | Fetch competition (game_reference for S3) |
-| GET    | /admin/snapshot/:id   | Root token | Fetch snapshot code text |
-| PUT    | /admin/battle/:id     | Root token | Write result + INSERT execution_log |
+| Method | Path                       | Auth       | Purpose |
+|--------|----------------------------|------------|---------|
+| GET    | /admin/competition/:id     | Root token | Fetch competition (game_reference, helper_reference, manifest_reference for S3) |
+| GET    | /admin/snapshot/:id        | Root token | Fetch snapshot code text |
+| POST   | /admin/battle-attempt/:id  | Root token | INSERT execution_log row (attempt breadcrumb) |
+| PUT    | /admin/battle/:id          | Root token | Write result on app.battle (triggers denorm updates) |
 
 All authenticated with `Authorization: Bearer <LAMBDA_CALLBACK_TOKEN>`.
-Root token bypasses user-route role checks (authorization.js).
